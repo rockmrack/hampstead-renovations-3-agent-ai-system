@@ -1,0 +1,579 @@
+{
+  "name": "Document Generation Orchestrator",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-doc-request",
+      "name": "Document Request Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "document-generator"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "doc-type-quote",
+              "leftValue": "={{ $json.document_type }}",
+              "rightValue": "quote",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "doc-type-contract",
+              "leftValue": "={{ $json.document_type }}",
+              "rightValue": "contract",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "doc-type-invoice",
+              "leftValue": "={{ $json.document_type }}",
+              "rightValue": "invoice",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "route-by-document-type",
+      "name": "Route by Document Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [460, 300],
+      "outputs": ["Quote", "Contract", "Invoice"]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://quote-builder:8001/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"deal_id\": \"{{ $json.deal_id }}\",\n  \"contact_id\": \"{{ $json.contact_id }}\",\n  \"project_details\": {{ JSON.stringify($json.project_details) }},\n  \"services\": {{ JSON.stringify($json.services) }},\n  \"options\": {\n    \"include_breakdown\": {{ $json.include_breakdown || true }},\n    \"include_timeline\": {{ $json.include_timeline || true }},\n    \"validity_days\": {{ $json.validity_days || 30 }}\n  }\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "generate-quote",
+      "name": "Generate Quote PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://contract-generator:8002/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"deal_id\": \"{{ $json.deal_id }}\",\n  \"contact_id\": \"{{ $json.contact_id }}\",\n  \"quote_id\": \"{{ $json.quote_id }}\",\n  \"contract_details\": {\n    \"project_description\": \"{{ $json.project_description }}\",\n    \"total_value\": {{ $json.total_value }},\n    \"payment_schedule\": {{ JSON.stringify($json.payment_schedule) }},\n    \"start_date\": \"{{ $json.start_date }}\",\n    \"estimated_duration_weeks\": {{ $json.duration_weeks }},\n    \"special_conditions\": {{ JSON.stringify($json.special_conditions || []) }}\n  },\n  \"client_info\": {\n    \"name\": \"{{ $json.client_name }}\",\n    \"email\": \"{{ $json.client_email }}\",\n    \"phone\": \"{{ $json.client_phone }}\",\n    \"address\": \"{{ $json.property_address }}\"\n  }\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "generate-contract",
+      "name": "Generate Contract PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://invoice-generator:8003/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"deal_id\": \"{{ $json.deal_id }}\",\n  \"contact_id\": \"{{ $json.contact_id }}\",\n  \"contract_id\": \"{{ $json.contract_id }}\",\n  \"invoice_details\": {\n    \"invoice_type\": \"{{ $json.invoice_type }}\",\n    \"milestone\": \"{{ $json.milestone }}\",\n    \"amount\": {{ $json.amount }},\n    \"description\": \"{{ $json.description }}\",\n    \"due_date\": \"{{ $json.due_date }}\"\n  },\n  \"client_info\": {\n    \"name\": \"{{ $json.client_name }}\",\n    \"email\": \"{{ $json.client_email }}\",\n    \"address\": \"{{ $json.billing_address }}\"\n  }\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "generate-invoice",
+      "name": "Generate Invoice PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge all document generation results\nconst items = $input.all();\nconst result = items[0].json;\n\nreturn {\n  json: {\n    document_id: result.document_id || result.quote_id || result.contract_id || result.invoice_id,\n    document_type: $('Document Request Webhook').item.json.document_type,\n    s3_url: result.s3_url,\n    pdf_url: result.pdf_url || result.s3_url,\n    filename: result.filename,\n    generated_at: new Date().toISOString(),\n    deal_id: $('Document Request Webhook').item.json.deal_id,\n    contact_id: $('Document Request Webhook').item.json.contact_id,\n    status: 'generated'\n  }\n};"
+      },
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://api.hubspot.com/crm/v3/objects/deals/{{ $json.deal_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"{{ $json.document_type }}_generated_date\": \"{{ new Date().toISOString().split('T')[0] }}\",\n    \"{{ $json.document_type }}_url\": \"{{ $json.pdf_url }}\",\n    \"{{ $json.document_type }}_id\": \"{{ $json.document_id }}\"\n  }\n}"
+      },
+      "id": "update-hubspot-deal",
+      "name": "Update HubSpot Deal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 200],
+      "credentials": {
+        "hubspotApi": {
+          "id": "hubspot-creds",
+          "name": "HubSpot API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": {
+          "__rl": true,
+          "value": "generated_documents",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "document_id": "={{ $json.document_id }}",
+            "document_type": "={{ $json.document_type }}",
+            "deal_id": "={{ $json.deal_id }}",
+            "contact_id": "={{ $json.contact_id }}",
+            "s3_url": "={{ $json.s3_url }}",
+            "generated_at": "={{ $json.generated_at }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "log-to-database",
+      "name": "Log to Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1120, 400],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "send-to-client",
+              "leftValue": "={{ $('Document Request Webhook').item.json.send_to_client }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-send-client",
+      "name": "Send to Client?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-5-20250514\",\n  \"max_tokens\": 1024,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Generate a professional email to send a {{ $json.document_type }} to a client for Hampstead Renovations.\\n\\nDocument details:\\n- Type: {{ $json.document_type }}\\n- Document ID: {{ $json.document_id }}\\n\\nThe email should:\\n1. Have a warm, professional tone appropriate for a premium renovation company\\n2. Briefly explain what the document contains\\n3. Mention next steps (e.g., review and sign for contracts, payment terms for invoices)\\n4. Include a call to action\\n5. Offer to discuss any questions\\n\\nReturn JSON:\\n{\\n  \\\"subject\\\": \\\"...\\\",\\n  \\\"body\\\": \\\"...\\\"\\n}\"\n    }\n  ]\n}"
+      },
+      "id": "generate-email-content",
+      "name": "Generate Email Content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "anthropic-creds",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const content = $input.first().json.content[0].text;\nconst jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\nconst emailContent = JSON.parse(jsonMatch[0]);\n\nreturn {\n  json: {\n    ...$('Merge Results').item.json,\n    email_subject: emailContent.subject,\n    email_body: emailContent.body\n  }\n};"
+      },
+      "id": "parse-email-content",
+      "name": "Parse Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 200]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Document Request Webhook').item.json.client_email }}",
+        "subject": "={{ $json.email_subject }}",
+        "emailType": "html",
+        "message": "=<html>\n<head>\n  <style>\n    body { font-family: 'Georgia', serif; color: #1a2b4a; line-height: 1.6; max-width: 600px; margin: 0 auto; }\n    .header { background: linear-gradient(135deg, #1a2b4a 0%, #2d4a7c 100%); padding: 30px; text-align: center; }\n    .logo { color: #c9a962; font-size: 24px; font-weight: bold; letter-spacing: 2px; }\n    .tagline { color: #ffffff; font-size: 12px; margin-top: 8px; }\n    .content { padding: 40px; background: #ffffff; }\n    .document-box { background: #f8f9fa; border-left: 4px solid #c9a962; padding: 20px; margin: 20px 0; }\n    .btn { background: #c9a962; color: #1a2b4a; padding: 15px 30px; text-decoration: none; display: inline-block; font-weight: bold; margin: 20px 0; }\n    .footer { background: #f5f5f5; padding: 30px; text-align: center; font-size: 12px; color: #666; }\n    .footer-links { margin: 15px 0; }\n    .footer-links a { color: #1a2b4a; margin: 0 10px; }\n  </style>\n</head>\n<body>\n  <div class=\"header\">\n    <div class=\"logo\">HAMPSTEAD RENOVATIONS</div>\n    <div class=\"tagline\">Premium Home Renovations in North West London</div>\n  </div>\n  <div class=\"content\">\n    {{ $json.email_body.replace(/\\n/g, '<br>') }}\n    <div class=\"document-box\">\n      <strong>Document:</strong> {{ $json.document_type.charAt(0).toUpperCase() + $json.document_type.slice(1) }}<br>\n      <strong>Reference:</strong> {{ $json.document_id }}\n    </div>\n    <a href=\"{{ $json.pdf_url }}\" class=\"btn\">View Document</a>\n  </div>\n  <div class=\"footer\">\n    <div class=\"footer-links\">\n      <a href=\"https://hampsteadrenovations.co.uk\">Website</a> |\n      <a href=\"https://hampsteadrenovations.co.uk/portfolio\">Portfolio</a> |\n      <a href=\"https://hampsteadrenovations.co.uk/contact\">Contact</a>\n    </div>\n    <p>Hampstead Renovations Ltd | Company No. 12345678</p>\n    <p>123 High Street, Hampstead, London NW3 1AB</p>\n    <p>020 7946 0958 | info@hampsteadrenovations.co.uk</p>\n  </div>\n</body>\n</html>",
+        "options": {
+          "attachments": "={{ $json.pdf_url }}"
+        }
+      },
+      "id": "send-document-email",
+      "name": "Send Document Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2000, 200],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-creds",
+          "name": "SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://waba.360dialog.io/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "D360-API-KEY",
+              "value": "={{ $env.WHATSAPP_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('Document Request Webhook').item.json.client_phone.replace(/[^0-9]/g, '') }}\",\n  \"type\": \"document\",\n  \"document\": {\n    \"link\": \"{{ $json.pdf_url }}\",\n    \"caption\": \"Your {{ $json.document_type }} from Hampstead Renovations is ready. Please review and let us know if you have any questions.\",\n    \"filename\": \"{{ $json.filename }}\"\n  }\n}"
+      },
+      "id": "send-whatsapp-document",
+      "name": "Send via WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 350]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "response",
+              "name": "success",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "document-id",
+              "name": "document_id",
+              "value": "={{ $('Merge Results').item.json.document_id }}",
+              "type": "string"
+            },
+            {
+              "id": "document-url",
+              "name": "document_url",
+              "value": "={{ $('Merge Results').item.json.pdf_url }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [2220, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2440, 300]
+    },
+    {
+      "parameters": {
+        "content": "## Document Generation Orchestrator\n\nCentral workflow for generating all document types:\n- Quotes (via quote-builder service)\n- Contracts (via contract-generator service)\n- Invoices (via invoice-generator service)\n\n### Features\n- Routes to appropriate microservice\n- Updates HubSpot deal records\n- Logs to PostgreSQL\n- Optionally sends to client via Email & WhatsApp\n- AI-generated covering messages\n\n### Usage\nPOST to /webhook/document-generator with:\n```json\n{\n  \"document_type\": \"quote|contract|invoice\",\n  \"deal_id\": \"...\",\n  \"contact_id\": \"...\",\n  \"send_to_client\": true,\n  \"client_email\": \"...\",\n  \"client_phone\": \"...\",\n  ...document-specific fields\n}\n```",
+        "height": 420,
+        "width": 400,
+        "color": 5
+      },
+      "id": "notes",
+      "name": "Workflow Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-80, 100]
+    },
+    {
+      "parameters": {
+        "content": "## Error Handling\nIf document generation fails, capture error and notify team",
+        "height": 80,
+        "width": 250,
+        "color": 3
+      },
+      "id": "error-note",
+      "name": "Error Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [680, 620]
+    }
+  ],
+  "connections": {
+    "Document Request Webhook": {
+      "main": [
+        [
+          {
+            "node": "Route by Document Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Document Type": {
+      "main": [
+        [
+          {
+            "node": "Generate Quote PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Contract PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Invoice PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Quote PDF": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Contract PDF": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Invoice PDF": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Update HubSpot Deal",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log to Database",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Send Client?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Send Client?": {
+      "main": [
+        [
+          {
+            "node": "Generate Email Content",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send via WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Email Content": {
+      "main": [
+        [
+          {
+            "node": "Parse Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Email": {
+      "main": [
+        [
+          {
+            "node": "Send Document Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Document Email": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send via WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update HubSpot Deal": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log to Database": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "hampstead-renovations"
+  },
+  "tags": [
+    {
+      "name": "Agent-3",
+      "id": "agent-3"
+    },
+    {
+      "name": "Documents",
+      "id": "documents"
+    }
+  ]
+}

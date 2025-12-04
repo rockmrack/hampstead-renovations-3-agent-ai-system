@@ -1,0 +1,328 @@
+{
+  "name": "Daily Pipeline Monitor & Follow-up Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "name": "Hourly Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH follow_up_candidates AS (\n  SELECT \n    l.id AS lead_id,\n    l.name,\n    l.email,\n    l.phone,\n    l.service_type,\n    l.postcode,\n    l.lead_score,\n    l.hubspot_deal_id,\n    l.current_stage,\n    l.last_follow_up_at,\n    l.follow_up_count,\n    l.next_follow_up_at,\n    q.id AS quote_id,\n    q.total_amount,\n    q.sent_at AS quote_sent_at,\n    q.valid_until,\n    c.last_message_at,\n    c.message_count,\n    CASE \n      WHEN l.current_stage = 'survey-completed' AND q.sent_at IS NULL THEN 'pending-quote'\n      WHEN l.current_stage = 'quoted' AND l.last_follow_up_at < NOW() - INTERVAL '3 days' THEN 'quote-follow-up'\n      WHEN l.current_stage = 'quoted' AND l.follow_up_count >= 1 AND l.last_follow_up_at < NOW() - INTERVAL '7 days' THEN 'quote-follow-up-2'\n      WHEN l.current_stage = 'quoted' AND l.follow_up_count >= 2 AND l.last_follow_up_at < NOW() - INTERVAL '14 days' THEN 'quote-reminder'\n      WHEN l.current_stage = 'survey-booked' AND l.survey_date < NOW() - INTERVAL '1 day' THEN 'post-survey'\n      WHEN l.current_stage = 'completed' AND l.completed_at BETWEEN NOW() - INTERVAL '8 days' AND NOW() - INTERVAL '6 days' THEN 'post-project'\n      WHEN l.current_stage IN ('cold', 'nurture') AND l.last_follow_up_at < NOW() - INTERVAL '60 days' THEN 'nurture-check-in'\n      ELSE NULL\n    END AS follow_up_stage\n  FROM leads l\n  LEFT JOIN quotes q ON l.id = q.lead_id AND q.status = 'sent'\n  LEFT JOIN conversations c ON l.id = c.lead_id\n  WHERE l.status != 'closed'\n    AND l.do_not_contact != true\n    AND (l.next_follow_up_at IS NULL OR l.next_follow_up_at <= NOW())\n)\nSELECT * FROM follow_up_candidates\nWHERE follow_up_stage IS NOT NULL\nORDER BY \n  CASE follow_up_stage\n    WHEN 'post-survey' THEN 1\n    WHEN 'quote-follow-up' THEN 2\n    WHEN 'post-project' THEN 3\n    ELSE 4\n  END,\n  lead_score DESC\nLIMIT 20;",
+        "options": {}
+      },
+      "name": "Find Follow-up Candidates",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [300, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-main",
+          "name": "PostgreSQL Main"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$json.length}}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "name": "Has Candidates?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "batchSize": 5,
+        "options": {}
+      },
+      "name": "Process in Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [700, 200]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Prepare context for follow-up generation\nconst lead = $input.all()[0].json;\n\nconst dayOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date().getDay()];\n\nreturn {\n  json: {\n    customer_name: lead.name?.split(' ')[0] || 'there',\n    full_name: lead.name,\n    stage: lead.follow_up_stage,\n    project_type: lead.service_type,\n    project_details: lead.postcode ? `Project in ${lead.postcode} area` : null,\n    last_contact_date: lead.last_message_at || lead.last_follow_up_at,\n    quote_amount: lead.total_amount ? `£${lead.total_amount.toLocaleString()}` : null,\n    quote_valid_until: lead.valid_until,\n    survey_notes: null,\n    previous_messages: [],\n    channel: lead.email ? 'email' : 'whatsapp',\n    day_of_week: dayOfWeek,\n    lead_id: lead.lead_id,\n    phone: lead.phone,\n    email: lead.email,\n    lead_score: lead.lead_score,\n    hubspot_deal_id: lead.hubspot_deal_id\n  }\n};"
+      },
+      "name": "Prepare Context",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-20250514",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "={{$env.FOLLOW_UP_GENERATOR_PROMPT}}"
+            },
+            {
+              "role": "user",
+              "content": "Generate a follow-up message with this context:\n\n{{JSON.stringify($json, null, 2)}}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 600
+        }
+      },
+      "name": "Claude - Generate Follow-up",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.2,
+      "position": [1100, 200],
+      "credentials": {
+        "anthropicApi": {
+          "id": "anthropic-api",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const response = $input.all()[0].json;\nconst context = $node['Prepare Context'].json;\n\nlet parsed;\ntry {\n  const content = response.message?.content?.[0]?.text || response.content || '';\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    parsed = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No JSON in response');\n  }\n} catch (e) {\n  parsed = {\n    message: { body: 'Unable to generate message', subject: 'Follow-up', channel_format: 'email' },\n    error: e.message\n  };\n}\n\nreturn {\n  json: {\n    ...context,\n    generated_message: parsed.message,\n    personalisation: parsed.personalisation,\n    next_follow_up: parsed.metadata?.next_follow_up\n  }\n};"
+      },
+      "name": "Parse Generated Message",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1300, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.generated_message.channel_format}}",
+              "operation": "equals",
+              "value2": "email"
+            }
+          ]
+        }
+      },
+      "name": "Is Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1500, 200]
+    },
+    {
+      "parameters": {
+        "fromEmail": "ross@hampsteadrenovations.co.uk",
+        "toEmail": "={{$json.email}}",
+        "subject": "={{$json.generated_message.subject}}",
+        "emailType": "text",
+        "message": "={{$json.generated_message.body}}",
+        "options": {
+          "replyTo": "ross@hampsteadrenovations.co.uk"
+        }
+      },
+      "name": "Send Email",
+      "type": "n8n-nodes-base.send Email",
+      "typeVersion": 2.1,
+      "position": [1700, 100],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-main",
+          "name": "SMTP Main"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "requestMethod": "POST",
+        "url": "https://waba.360dialog.io/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "D360-API-KEY",
+              "value": "={{$env.DIALOG360_API_KEY}}"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "to",
+              "value": "={{$json.phone}}"
+            },
+            {
+              "name": "type",
+              "value": "text"
+            },
+            {
+              "name": "text",
+              "value": "={\"body\": \"{{$json.generated_message.body.replace(/\"/g, '\\\\\"').replace(/\\n/g, '\\\\n')}}\"}"
+            }
+          ]
+        }
+      },
+      "name": "Send WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1700, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "leads",
+        "updateKey": "id",
+        "columns": "last_follow_up_at, follow_up_count, next_follow_up_at",
+        "values": {
+          "id": "={{$node['Prepare Context'].json.lead_id}}",
+          "last_follow_up_at": "={{new Date().toISOString()}}",
+          "follow_up_count": "={{($node['Prepare Context'].json.follow_up_count || 0) + 1}}",
+          "next_follow_up_at": "={{new Date(Date.now() + ($node['Parse Generated Message'].json.next_follow_up?.delay_days || 7) * 86400000).toISOString()}}"
+        }
+      },
+      "name": "Update Lead Follow-up Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [1900, 200],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-main",
+          "name": "PostgreSQL Main"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "audit_log",
+        "columns": "entity_type, entity_id, action, actor, new_value, created_at",
+        "values": {
+          "entity_type": "lead",
+          "entity_id": "={{$node['Prepare Context'].json.lead_id}}",
+          "action": "follow_up_sent",
+          "actor": "system",
+          "new_value": "={{JSON.stringify({stage: $node['Prepare Context'].json.stage, channel: $node['Parse Generated Message'].json.generated_message.channel_format, message: $node['Parse Generated Message'].json.generated_message.body})}}",
+          "created_at": "={{new Date().toISOString()}}"
+        }
+      },
+      "name": "Log Follow-up",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [2100, 200],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-main",
+          "name": "PostgreSQL Main"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// No candidates to process\nreturn { json: { status: 'no_candidates', timestamp: new Date().toISOString() } };"
+      },
+      "name": "No Candidates",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [700, 400]
+    }
+  ],
+  "connections": {
+    "Hourly Trigger": {
+      "main": [
+        [{ "node": "Find Follow-up Candidates", "type": "main", "index": 0 }]
+      ]
+    },
+    "Find Follow-up Candidates": {
+      "main": [
+        [{ "node": "Has Candidates?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Candidates?": {
+      "main": [
+        [{ "node": "Process in Batches", "type": "main", "index": 0 }],
+        [{ "node": "No Candidates", "type": "main", "index": 0 }]
+      ]
+    },
+    "Process in Batches": {
+      "main": [
+        [{ "node": "Prepare Context", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Context": {
+      "main": [
+        [{ "node": "Claude - Generate Follow-up", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude - Generate Follow-up": {
+      "main": [
+        [{ "node": "Parse Generated Message", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Generated Message": {
+      "main": [
+        [{ "node": "Is Email?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is Email?": {
+      "main": [
+        [{ "node": "Send Email", "type": "main", "index": 0 }],
+        [{ "node": "Send WhatsApp", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Email": {
+      "main": [
+        [{ "node": "Update Lead Follow-up Status", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send WhatsApp": {
+      "main": [
+        [{ "node": "Update Lead Follow-up Status", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Lead Follow-up Status": {
+      "main": [
+        [{ "node": "Log Follow-up", "type": "main", "index": 0 }]
+      ]
+    },
+    "Log Follow-up": {
+      "main": [
+        [{ "node": "Process in Batches", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "error-handler-workflow"
+  },
+  "staticData": null,
+  "tags": [
+    { "name": "agent-2" },
+    { "name": "follow-up" },
+    { "name": "automation" }
+  ],
+  "pinData": {},
+  "versionId": "1.0.0"
+}

@@ -1,0 +1,464 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Hampstead Renovations Pipeline Configuration",
+  "description": "Sales pipeline stages and automation rules",
+  "version": "2.0.0",
+  "lastUpdated": "2024-12-04",
+
+  "pipelines": [
+    {
+      "id": "renovation-pipeline",
+      "name": "Renovation Pipeline",
+      "description": "Main pipeline for renovation projects from lead to completion",
+      "stages": [
+        {
+          "id": "new",
+          "label": "New Lead",
+          "displayOrder": 1,
+          "probability": 0.10,
+          "rotting": {
+            "threshold_hours": 24,
+            "alert_channel": "slack"
+          },
+          "automations": [
+            {
+              "action": "send_initial_response",
+              "delay_minutes": 0,
+              "condition": "first_touch"
+            },
+            {
+              "action": "create_task",
+              "task": "Qualify new lead",
+              "assignee": "owner",
+              "due_hours": 4
+            },
+            {
+              "action": "slack_notification",
+              "channel": "#leads",
+              "template": "new_lead"
+            }
+          ],
+          "exitCriteria": [
+            "contact_made",
+            "qualification_complete"
+          ]
+        },
+        {
+          "id": "contacted",
+          "label": "Contacted",
+          "displayOrder": 2,
+          "probability": 0.20,
+          "rotting": {
+            "threshold_hours": 72,
+            "alert_channel": "slack"
+          },
+          "automations": [
+            {
+              "action": "schedule_followup",
+              "delay_days": 3,
+              "condition": "no_response"
+            },
+            {
+              "action": "send_portfolio",
+              "delay_hours": 24,
+              "condition": "interested"
+            }
+          ],
+          "exitCriteria": [
+            "survey_requested",
+            "more_info_needed",
+            "not_interested"
+          ]
+        },
+        {
+          "id": "survey-scheduled",
+          "label": "Survey Scheduled",
+          "displayOrder": 3,
+          "probability": 0.40,
+          "rotting": {
+            "threshold_hours": 48,
+            "alert_channel": "slack"
+          },
+          "automations": [
+            {
+              "action": "send_confirmation",
+              "trigger": "on_entry",
+              "channels": ["whatsapp", "email"]
+            },
+            {
+              "action": "send_reminder",
+              "trigger": "survey_date_minus_24h",
+              "channels": ["whatsapp"]
+            },
+            {
+              "action": "send_reminder",
+              "trigger": "survey_date_morning",
+              "channels": ["sms"]
+            },
+            {
+              "action": "create_calendar_event",
+              "trigger": "on_entry"
+            },
+            {
+              "action": "prepare_survey_pack",
+              "trigger": "survey_date_minus_48h"
+            }
+          ],
+          "exitCriteria": [
+            "survey_completed",
+            "survey_cancelled",
+            "survey_rescheduled"
+          ]
+        },
+        {
+          "id": "survey-completed",
+          "label": "Survey Completed",
+          "displayOrder": 4,
+          "probability": 0.50,
+          "rotting": {
+            "threshold_hours": 120,
+            "alert_channel": "slack"
+          },
+          "automations": [
+            {
+              "action": "send_thank_you",
+              "delay_hours": 2,
+              "channels": ["whatsapp"]
+            },
+            {
+              "action": "create_task",
+              "task": "Prepare quote",
+              "assignee": "owner",
+              "due_hours": 72
+            },
+            {
+              "action": "request_survey_notes",
+              "trigger": "on_entry"
+            }
+          ],
+          "exitCriteria": [
+            "quote_prepared",
+            "project_too_complex",
+            "not_proceeding"
+          ]
+        },
+        {
+          "id": "quote-sent",
+          "label": "Quote Sent",
+          "displayOrder": 5,
+          "probability": 0.60,
+          "rotting": {
+            "threshold_hours": 168,
+            "alert_channel": "slack"
+          },
+          "automations": [
+            {
+              "action": "track_quote_open",
+              "trigger": "quote_viewed"
+            },
+            {
+              "action": "send_followup",
+              "delay_days": 5,
+              "condition": "no_response",
+              "template": "quote_followup_1"
+            },
+            {
+              "action": "send_followup",
+              "delay_days": 10,
+              "condition": "no_response",
+              "template": "quote_followup_2"
+            },
+            {
+              "action": "create_task",
+              "task": "Final follow-up call",
+              "assignee": "owner",
+              "trigger": "delay_days_14"
+            }
+          ],
+          "exitCriteria": [
+            "quote_accepted",
+            "quote_rejected",
+            "negotiation_started",
+            "quote_expired"
+          ]
+        },
+        {
+          "id": "negotiation",
+          "label": "In Negotiation",
+          "displayOrder": 6,
+          "probability": 0.75,
+          "rotting": {
+            "threshold_hours": 48,
+            "alert_channel": "slack"
+          },
+          "automations": [
+            {
+              "action": "log_objection",
+              "trigger": "manual"
+            },
+            {
+              "action": "generate_revised_quote",
+              "trigger": "scope_change"
+            },
+            {
+              "action": "escalate_to_director",
+              "trigger": "discount_request_over_10_percent"
+            }
+          ],
+          "exitCriteria": [
+            "terms_agreed",
+            "deal_lost",
+            "quote_revised"
+          ]
+        },
+        {
+          "id": "contract-sent",
+          "label": "Contract Sent",
+          "displayOrder": 7,
+          "probability": 0.85,
+          "rotting": {
+            "threshold_hours": 72,
+            "alert_channel": "slack"
+          },
+          "automations": [
+            {
+              "action": "send_contract",
+              "trigger": "on_entry",
+              "method": "docusign"
+            },
+            {
+              "action": "send_reminder",
+              "delay_days": 3,
+              "condition": "unsigned"
+            },
+            {
+              "action": "call_reminder",
+              "delay_days": 5,
+              "condition": "unsigned"
+            }
+          ],
+          "exitCriteria": [
+            "contract_signed",
+            "contract_rejected"
+          ]
+        },
+        {
+          "id": "won",
+          "label": "Won 🎉",
+          "displayOrder": 8,
+          "probability": 1.0,
+          "rotting": null,
+          "automations": [
+            {
+              "action": "celebrate_slack",
+              "trigger": "on_entry",
+              "channel": "#sales"
+            },
+            {
+              "action": "create_project_folder",
+              "trigger": "on_entry"
+            },
+            {
+              "action": "send_welcome_pack",
+              "trigger": "on_entry"
+            },
+            {
+              "action": "generate_deposit_invoice",
+              "trigger": "on_entry"
+            },
+            {
+              "action": "schedule_project_kickoff",
+              "trigger": "deposit_received"
+            },
+            {
+              "action": "add_to_project_pipeline",
+              "trigger": "deposit_received"
+            }
+          ],
+          "exitCriteria": []
+        },
+        {
+          "id": "lost",
+          "label": "Lost",
+          "displayOrder": 9,
+          "probability": 0,
+          "rotting": null,
+          "automations": [
+            {
+              "action": "capture_lost_reason",
+              "trigger": "on_entry",
+              "required": true
+            },
+            {
+              "action": "send_nurture_sequence",
+              "delay_days": 180,
+              "condition": "reason_not_cancelled"
+            },
+            {
+              "action": "log_competitor_intel",
+              "trigger": "reason_is_competitor"
+            }
+          ],
+          "exitCriteria": []
+        }
+      ]
+    },
+    {
+      "id": "project-pipeline",
+      "name": "Project Delivery Pipeline",
+      "description": "Track projects from won deal to completion",
+      "stages": [
+        {
+          "id": "pre-construction",
+          "label": "Pre-Construction",
+          "displayOrder": 1,
+          "automations": [
+            {
+              "action": "create_checklist",
+              "items": [
+                "Planning approval (if required)",
+                "Building control application",
+                "Party wall notices",
+                "Material selections",
+                "Subcontractor scheduling"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "in-progress",
+          "label": "In Progress",
+          "displayOrder": 2,
+          "automations": [
+            {
+              "action": "weekly_update",
+              "trigger": "weekly",
+              "channels": ["email", "whatsapp"]
+            },
+            {
+              "action": "photo_update",
+              "trigger": "milestone"
+            }
+          ]
+        },
+        {
+          "id": "snagging",
+          "label": "Snagging",
+          "displayOrder": 3,
+          "automations": [
+            {
+              "action": "create_snagging_list",
+              "trigger": "on_entry"
+            }
+          ]
+        },
+        {
+          "id": "completed",
+          "label": "Completed",
+          "displayOrder": 4,
+          "automations": [
+            {
+              "action": "generate_final_invoice",
+              "trigger": "on_entry"
+            },
+            {
+              "action": "request_review",
+              "delay_days": 14
+            },
+            {
+              "action": "request_photos",
+              "delay_days": 30
+            }
+          ]
+        }
+      ]
+    }
+  ],
+
+  "leadPriority": {
+    "hot": {
+      "label": "🔥 Hot",
+      "scoreRange": [80, 100],
+      "responseTime": "1 hour",
+      "followUpFrequency": "daily",
+      "escalationTime": "4 hours",
+      "color": "#EF4444"
+    },
+    "warm": {
+      "label": "🟡 Warm",
+      "scoreRange": [60, 79],
+      "responseTime": "4 hours",
+      "followUpFrequency": "every 3 days",
+      "escalationTime": "24 hours",
+      "color": "#F59E0B"
+    },
+    "cool": {
+      "label": "🔵 Cool",
+      "scoreRange": [40, 59],
+      "responseTime": "24 hours",
+      "followUpFrequency": "weekly",
+      "escalationTime": "72 hours",
+      "color": "#3B82F6"
+    },
+    "cold": {
+      "label": "❄️ Cold",
+      "scoreRange": [0, 39],
+      "responseTime": "48 hours",
+      "followUpFrequency": "monthly",
+      "escalationTime": null,
+      "color": "#6B7280"
+    }
+  },
+
+  "dealValueEstimates": {
+    "under-15k": { "min": 5000, "mid": 10000, "max": 15000 },
+    "15k-40k": { "min": 15000, "mid": 27500, "max": 40000 },
+    "40k-100k": { "min": 40000, "mid": 70000, "max": 100000 },
+    "100k-250k": { "min": 100000, "mid": 175000, "max": 250000 },
+    "over-250k": { "min": 250000, "mid": 350000, "max": 500000 },
+    "unknown": { "min": 30000, "mid": 50000, "max": 80000 }
+  },
+
+  "serviceAreas": {
+    "primary": ["NW3", "NW6", "NW11"],
+    "secondary": ["NW2", "NW8", "N6", "N2", "N10"],
+    "tertiary": ["NW1", "NW5", "NW10", "N1", "N3", "N7"],
+    "premium_multiplier": {
+      "NW3": 1.15,
+      "NW11": 1.10,
+      "NW6": 1.05,
+      "N6": 1.08
+    }
+  },
+
+  "conservationAreas": {
+    "hampstead": {
+      "name": "Hampstead Conservation Area",
+      "postcodes": ["NW3"],
+      "specialRequirements": [
+        "Article 4 direction may apply",
+        "Heritage statement usually required",
+        "Material samples may need approval"
+      ],
+      "planningNotes": "Extra scrutiny on extensions and roof alterations"
+    },
+    "belsize-park": {
+      "name": "Belsize Park Conservation Area",
+      "postcodes": ["NW3"],
+      "specialRequirements": [
+        "Victorian character protection",
+        "Roof form restrictions"
+      ]
+    },
+    "hampstead-garden-suburb": {
+      "name": "Hampstead Garden Suburb",
+      "postcodes": ["NW11"],
+      "specialRequirements": [
+        "Extremely strict design codes",
+        "HGS Trust approval required",
+        "Limited external changes permitted"
+      ],
+      "planningNotes": "Consult HGS Trust before any proposals"
+    }
+  }
+}

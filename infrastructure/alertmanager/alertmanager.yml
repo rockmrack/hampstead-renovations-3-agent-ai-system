@@ -1,0 +1,126 @@
+global:
+  smtp_smarthost: 'smtp.sendgrid.net:587'
+  smtp_from: 'alerts@hampsteadrenovations.co.uk'
+  smtp_auth_username: 'apikey'
+  smtp_auth_password: '${SENDGRID_API_KEY}'
+  smtp_require_tls: true
+  slack_api_url: '${SLACK_WEBHOOK_URL}'
+
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+route:
+  group_by: ['alertname', 'severity', 'team']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'default-receiver'
+  
+  routes:
+    # Critical alerts - immediate notification
+    - match:
+        severity: critical
+      receiver: 'critical-receiver'
+      group_wait: 10s
+      repeat_interval: 1h
+      continue: true
+
+    # Sales team alerts
+    - match:
+        team: sales
+      receiver: 'sales-team'
+      group_interval: 10m
+      
+    # Platform/infrastructure alerts
+    - match:
+        team: platform
+      receiver: 'platform-team'
+
+    # Business hours filter for non-critical
+    - match:
+        severity: warning
+      active_time_intervals:
+        - business_hours
+      receiver: 'default-receiver'
+
+time_intervals:
+  - name: business_hours
+    time_intervals:
+      - weekdays: ['monday:friday']
+        times:
+          - start_time: '08:00'
+            end_time: '20:00'
+
+receivers:
+  - name: 'default-receiver'
+    slack_configs:
+      - channel: '#hampstead-alerts'
+        username: 'AlertBot'
+        icon_emoji: ':warning:'
+        send_resolved: true
+        title: '{{ template "slack.default.title" . }}'
+        text: '{{ template "slack.default.text" . }}'
+        actions:
+          - type: button
+            text: 'View in Grafana'
+            url: 'https://monitoring.hampsteadrenovations.co.uk/d/overview'
+          - type: button
+            text: 'Silence'
+            url: '{{ template "slack.default.silence_url" . }}'
+
+  - name: 'critical-receiver'
+    slack_configs:
+      - channel: '#hampstead-critical'
+        username: 'CRITICAL AlertBot'
+        icon_emoji: ':rotating_light:'
+        send_resolved: true
+        title: ':fire: CRITICAL: {{ .CommonAnnotations.summary }}'
+        text: '{{ template "slack.default.text" . }}'
+    email_configs:
+      - to: 'ross@hampsteadrenovations.co.uk,alerts@hampsteadrenovations.co.uk'
+        send_resolved: true
+        headers:
+          Subject: 'CRITICAL: {{ .CommonAnnotations.summary }}'
+        html: '{{ template "email.default.html" . }}'
+    pagerduty_configs:
+      - service_key: '${PAGERDUTY_SERVICE_KEY}'
+        severity: critical
+        description: '{{ .CommonAnnotations.summary }}'
+        details:
+          firing: '{{ template "pagerduty.default.instances" .Alerts.Firing }}'
+
+  - name: 'sales-team'
+    slack_configs:
+      - channel: '#hampstead-sales-alerts'
+        username: 'Sales AlertBot'
+        icon_emoji: ':chart_with_upwards_trend:'
+        send_resolved: true
+        title: '{{ template "slack.default.title" . }}'
+        text: '{{ template "slack.default.text" . }}'
+    email_configs:
+      - to: 'sales@hampsteadrenovations.co.uk'
+        send_resolved: true
+
+  - name: 'platform-team'
+    slack_configs:
+      - channel: '#hampstead-platform'
+        username: 'Platform AlertBot'
+        icon_emoji: ':gear:'
+        send_resolved: true
+        title: '{{ template "slack.default.title" . }}'
+        text: '{{ template "slack.default.text" . }}'
+
+inhibit_rules:
+  # Inhibit warnings when critical alerts are firing
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'job']
+
+  # Inhibit all alerts if service is down
+  - source_match:
+      alertname: 'ServiceDown'
+    target_match_re:
+      alertname: '.+'
+    equal: ['job']

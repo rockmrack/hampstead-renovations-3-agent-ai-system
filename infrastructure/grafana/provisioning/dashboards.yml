@@ -1,0 +1,14 @@
+apiVersion: 1
+
+providers:
+  - name: 'Hampstead Renovations'
+    orgId: 1
+    folder: 'Hampstead'
+    folderUid: 'hampstead'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

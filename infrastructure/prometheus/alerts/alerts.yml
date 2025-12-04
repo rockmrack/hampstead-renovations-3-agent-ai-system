@@ -1,0 +1,359 @@
+groups:
+  - name: hampstead_renovations_alerts
+    rules:
+      # ============================================
+      # Service Availability Alerts
+      # ============================================
+      
+      - alert: ServiceDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.job }} has been down for more than 2 minutes."
+          runbook_url: "https://docs.hampsteadrenovations.co.uk/runbooks/service-down"
+
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m])) by (job)
+            /
+            sum(rate(http_requests_total[5m])) by (job)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High error rate on {{ $labels.job }}"
+          description: "{{ $labels.job }} has >5% error rate for 5 minutes. Current: {{ $value | humanizePercentage }}"
+
+      - alert: CriticalErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m])) by (job)
+            /
+            sum(rate(http_requests_total[5m])) by (job)
+          ) > 0.15
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Critical error rate on {{ $labels.job }}"
+          description: "{{ $labels.job }} has >15% error rate. Immediate attention required."
+
+      # ============================================
+      # Latency Alerts
+      # ============================================
+
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job)
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High latency on {{ $labels.job }}"
+          description: "95th percentile latency is {{ $value | humanizeDuration }} on {{ $labels.job }}"
+
+      - alert: VeryHighLatency
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, job)
+          ) > 5
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Very high latency on {{ $labels.job }}"
+          description: "95th percentile latency exceeds 5s on {{ $labels.job }}. Service degraded."
+
+      # ============================================
+      # n8n Workflow Alerts
+      # ============================================
+
+      - alert: N8nWorkflowFailures
+        expr: |
+          increase(n8n_workflow_errors_total[1h]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          team: sales
+        annotations:
+          summary: "n8n workflow failures detected"
+          description: "More than 5 workflow failures in the last hour. Check n8n logs."
+
+      - alert: N8nHighQueueDepth
+        expr: n8n_queue_depth > 100
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "n8n queue depth high"
+          description: "n8n queue has {{ $value }} pending executions."
+
+      - alert: N8nWebhookErrors
+        expr: |
+          increase(n8n_webhook_errors_total[15m]) > 10
+        for: 5m
+        labels:
+          severity: critical
+          team: sales
+        annotations:
+          summary: "High webhook error rate"
+          description: "Lead intake may be affected. {{ $value }} webhook errors in 15 minutes."
+
+      # ============================================
+      # Database Alerts
+      # ============================================
+
+      - alert: PostgresHighConnections
+        expr: |
+          pg_stat_database_numbackends / pg_settings_max_connections > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "PostgreSQL connections high"
+          description: "Database connections at {{ $value | humanizePercentage }} of max."
+
+      - alert: PostgresDeadlocks
+        expr: increase(pg_stat_database_deadlocks[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "PostgreSQL deadlocks detected"
+          description: "{{ $value }} deadlocks in the last 5 minutes on {{ $labels.datname }}"
+
+      - alert: PostgresSlowQueries
+        expr: |
+          pg_stat_activity_max_tx_duration{state="active"} > 60
+        for: 2m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Long-running PostgreSQL queries"
+          description: "Query running for {{ $value | humanizeDuration }}"
+
+      - alert: PostgresDiskSpace
+        expr: |
+          pg_database_size_bytes / (1024*1024*1024) > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "PostgreSQL database growing large"
+          description: "Database {{ $labels.datname }} is {{ $value | humanize }}GB"
+
+      # ============================================
+      # Redis Alerts
+      # ============================================
+
+      - alert: RedisHighMemory
+        expr: |
+          redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Redis memory usage high"
+          description: "Redis using {{ $value | humanizePercentage }} of max memory"
+
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Redis is down"
+          description: "Redis instance is unreachable. Caching and queuing affected."
+
+      - alert: RedisRejectedConnections
+        expr: increase(redis_rejected_connections_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Redis rejecting connections"
+          description: "{{ $value }} connections rejected in 5 minutes"
+
+      # ============================================
+      # Lead & Sales Alerts
+      # ============================================
+
+      - alert: NoLeadsReceived
+        expr: |
+          increase(leads_received_total[2h]) == 0 
+          and hour() >= 8 and hour() <= 20
+        for: 30m
+        labels:
+          severity: warning
+          team: sales
+        annotations:
+          summary: "No leads received"
+          description: "No new leads in the last 2 hours during business hours. Check integrations."
+
+      - alert: LeadProcessingDelay
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(lead_processing_duration_seconds_bucket[15m])) by (le)
+          ) > 30
+        for: 10m
+        labels:
+          severity: warning
+          team: sales
+        annotations:
+          summary: "Lead processing slow"
+          description: "Lead processing taking {{ $value | humanizeDuration }}. May affect response times."
+
+      - alert: HighValueLeadAlert
+        expr: |
+          increase(leads_received_total{score="A"}[1h]) > 0
+        for: 0m
+        labels:
+          severity: info
+          team: sales
+        annotations:
+          summary: "High-value lead received"
+          description: "A-score lead received. Prioritize follow-up."
+
+      - alert: WhatsAppDeliveryFailures
+        expr: |
+          increase(whatsapp_delivery_failures_total[1h]) > 3
+        for: 5m
+        labels:
+          severity: warning
+          team: sales
+        annotations:
+          summary: "WhatsApp delivery issues"
+          description: "{{ $value }} WhatsApp message failures. Check 360dialog integration."
+
+      # ============================================
+      # Document Generation Alerts
+      # ============================================
+
+      - alert: QuoteGenerationFailures
+        expr: |
+          increase(quote_generation_failures_total[1h]) > 2
+        for: 5m
+        labels:
+          severity: warning
+          team: sales
+        annotations:
+          summary: "Quote generation failing"
+          description: "{{ $value }} quote generation failures in the last hour."
+
+      - alert: ContractGenerationSlow
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(contract_generation_duration_seconds_bucket[15m])) by (le)
+          ) > 30
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Contract generation slow"
+          description: "Contract PDF generation taking {{ $value | humanizeDuration }}"
+
+      - alert: S3UploadFailures
+        expr: |
+          increase(s3_upload_failures_total[1h]) > 3
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "S3 upload failures"
+          description: "Document uploads to S3 failing. {{ $value }} failures in the last hour."
+
+      # ============================================
+      # Infrastructure Alerts
+      # ============================================
+
+      - alert: HighCPUUsage
+        expr: |
+          100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage at {{ $value | humanize }}% on {{ $labels.instance }}"
+
+      - alert: HighMemoryUsage
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage at {{ $value | humanize }}%"
+
+      - alert: DiskSpaceLow
+        expr: |
+          (1 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})) * 100 > 80
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Disk space low"
+          description: "Disk usage at {{ $value | humanize }}% on {{ $labels.instance }}"
+
+      - alert: ContainerRestarting
+        expr: |
+          increase(container_restarts_total[1h]) > 3
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Container restarting"
+          description: "Container {{ $labels.name }} has restarted {{ $value }} times in the last hour"
+
+      # ============================================
+      # SSL/TLS Alerts
+      # ============================================
+
+      - alert: SSLCertExpiringSoon
+        expr: |
+          probe_ssl_earliest_cert_expiry - time() < 86400 * 14
+        for: 1h
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "SSL certificate expiring soon"
+          description: "SSL certificate for {{ $labels.instance }} expires in {{ $value | humanizeDuration }}"
+
+      - alert: SSLCertExpiryCritical
+        expr: |
+          probe_ssl_earliest_cert_expiry - time() < 86400 * 7
+        for: 1h
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "SSL certificate expiring very soon"
+          description: "SSL certificate for {{ $labels.instance }} expires in {{ $value | humanizeDuration }}. Renew immediately!"

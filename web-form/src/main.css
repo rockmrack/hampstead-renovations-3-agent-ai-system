@@ -1,0 +1,201 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  
+  body {
+    @apply bg-hampstead-50 text-hampstead-900 antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-serif;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 
+           px-6 py-3 
+           bg-gold-500 text-navy-950 
+           font-semibold rounded-lg 
+           shadow-md hover:shadow-lg 
+           hover:bg-gold-400 
+           focus:outline-none focus:ring-2 focus:ring-gold-500 focus:ring-offset-2
+           transition-all duration-200
+           disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-gold-500;
+  }
+  
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 
+           px-6 py-3 
+           bg-navy-700 text-white 
+           font-semibold rounded-lg 
+           shadow-md hover:shadow-lg 
+           hover:bg-navy-600 
+           focus:outline-none focus:ring-2 focus:ring-navy-500 focus:ring-offset-2
+           transition-all duration-200
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  .btn-outline {
+    @apply inline-flex items-center justify-center gap-2 
+           px-6 py-3 
+           bg-transparent 
+           border-2 border-navy-700 text-navy-700
+           font-semibold rounded-lg 
+           hover:bg-navy-50
+           focus:outline-none focus:ring-2 focus:ring-navy-500 focus:ring-offset-2
+           transition-all duration-200;
+  }
+  
+  .input-field {
+    @apply w-full px-4 py-3 
+           bg-white 
+           border border-hampstead-300 
+           rounded-lg 
+           text-hampstead-900 
+           placeholder:text-hampstead-400
+           focus:outline-none focus:ring-2 focus:ring-gold-500 focus:border-transparent
+           transition-all duration-200
+           disabled:bg-hampstead-100 disabled:cursor-not-allowed;
+  }
+  
+  .input-field.error {
+    @apply border-red-500 focus:ring-red-500;
+  }
+  
+  .input-label {
+    @apply block text-sm font-medium text-hampstead-700 mb-1.5;
+  }
+  
+  .input-error {
+    @apply text-sm text-red-600 mt-1.5 flex items-center gap-1;
+  }
+  
+  .card {
+    @apply bg-white rounded-xl shadow-md border border-hampstead-100 overflow-hidden;
+  }
+  
+  .card-hover {
+    @apply card hover:shadow-lg hover:border-gold-300 transition-all duration-200 cursor-pointer;
+  }
+  
+  .service-card {
+    @apply card-hover p-4 flex items-start gap-3;
+  }
+  
+  .service-card.selected {
+    @apply border-gold-500 ring-2 ring-gold-500 bg-gold-50;
+  }
+  
+  .step-indicator {
+    @apply flex items-center justify-center 
+           w-10 h-10 
+           rounded-full 
+           border-2
+           font-semibold
+           transition-all duration-200;
+  }
+  
+  .step-indicator.active {
+    @apply bg-gold-500 border-gold-500 text-navy-950;
+  }
+  
+  .step-indicator.completed {
+    @apply bg-navy-700 border-navy-700 text-white;
+  }
+  
+  .step-indicator.upcoming {
+    @apply bg-hampstead-100 border-hampstead-300 text-hampstead-400;
+  }
+  
+  .progress-bar {
+    @apply h-1 bg-hampstead-200 rounded-full overflow-hidden;
+  }
+  
+  .progress-bar-fill {
+    @apply h-full bg-gold-500 transition-all duration-500 ease-out;
+  }
+  
+  .checkbox-custom {
+    @apply h-5 w-5 
+           rounded 
+           border-hampstead-300 
+           text-gold-500 
+           focus:ring-gold-500 
+           transition-colors duration-200;
+  }
+  
+  .radio-custom {
+    @apply h-5 w-5 
+           border-hampstead-300 
+           text-gold-500 
+           focus:ring-gold-500 
+           transition-colors duration-200;
+  }
+  
+  .tooltip {
+    @apply absolute z-10 
+           px-3 py-2 
+           text-sm 
+           bg-hampstead-900 text-white 
+           rounded-lg 
+           shadow-lg
+           opacity-0 invisible 
+           group-hover:opacity-100 group-hover:visible 
+           transition-all duration-200;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  
+  .animation-delay-150 {
+    animation-delay: 150ms;
+  }
+  
+  .animation-delay-300 {
+    animation-delay: 300ms;
+  }
+  
+  .animation-delay-500 {
+    animation-delay: 500ms;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-hampstead-100;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-hampstead-300 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-hampstead-400;
+}
+
+/* Focus visible for accessibility */
+:focus-visible {
+  @apply outline-none ring-2 ring-gold-500 ring-offset-2;
+}
+
+/* Print styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}

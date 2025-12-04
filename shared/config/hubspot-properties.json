@@ -1,0 +1,565 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HubSpot Properties Configuration",
+  "description": "Custom properties for Hampstead Renovations HubSpot CRM",
+  "version": "2.0.0",
+  "lastUpdated": "2024-12-04",
+  
+  "contactProperties": [
+    {
+      "name": "postcode",
+      "label": "Property Postcode",
+      "type": "string",
+      "fieldType": "text",
+      "groupName": "property_information",
+      "description": "UK postcode of the property for works",
+      "formField": true
+    },
+    {
+      "name": "postcode_area",
+      "label": "Postcode Area",
+      "type": "string",
+      "fieldType": "text",
+      "groupName": "property_information",
+      "description": "Extracted postcode area (e.g., NW3, NW11)",
+      "calculated": true
+    },
+    {
+      "name": "area_name",
+      "label": "Area Name",
+      "type": "string",
+      "fieldType": "text",
+      "groupName": "property_information",
+      "description": "Neighbourhood name (e.g., Hampstead, Belsize Park)"
+    },
+    {
+      "name": "service_interest",
+      "label": "Service Interest",
+      "type": "enumeration",
+      "fieldType": "select",
+      "groupName": "project_details",
+      "description": "Primary service the contact is interested in",
+      "options": [
+        { "label": "Kitchen Extension", "value": "kitchen-extension", "displayOrder": 1 },
+        { "label": "Loft Conversion", "value": "loft-conversion", "displayOrder": 2 },
+        { "label": "Bathroom Refurbishment", "value": "bathroom", "displayOrder": 3 },
+        { "label": "Full House Renovation", "value": "full-renovation", "displayOrder": 4 },
+        { "label": "Basement Conversion", "value": "basement", "displayOrder": 5 },
+        { "label": "Structural Works", "value": "structural", "displayOrder": 6 },
+        { "label": "Property Maintenance", "value": "maintenance", "displayOrder": 7 },
+        { "label": "Other", "value": "other", "displayOrder": 8 }
+      ]
+    },
+    {
+      "name": "property_type",
+      "label": "Property Type",
+      "type": "enumeration",
+      "fieldType": "select",
+      "groupName": "property_information",
+      "description": "Type of property",
+      "options": [
+        { "label": "Flat / Apartment", "value": "flat", "displayOrder": 1 },
+        { "label": "Terraced House", "value": "terraced", "displayOrder": 2 },
+        { "label": "Semi-Detached", "value": "semi-detached", "displayOrder": 3 },
+        { "label": "Detached House", "value": "detached", "displayOrder": 4 },
+        { "label": "Mansion Block", "value": "mansion-block", "displayOrder": 5 },
+        { "label": "Period Conversion", "value": "period-conversion", "displayOrder": 6 },
+        { "label": "Mews House", "value": "mews", "displayOrder": 7 }
+      ]
+    },
+    {
+      "name": "property_age",
+      "label": "Property Age",
+      "type": "enumeration",
+      "fieldType": "select",
+      "groupName": "property_information",
+      "options": [
+        { "label": "Pre-1900 (Victorian)", "value": "pre-1900", "displayOrder": 1 },
+        { "label": "1900-1930 (Edwardian)", "value": "1900-1930", "displayOrder": 2 },
+        { "label": "1930-1960", "value": "1930-1960", "displayOrder": 3 },
+        { "label": "1960-1990", "value": "1960-1990", "displayOrder": 4 },
+        { "label": "Post-1990", "value": "post-1990", "displayOrder": 5 }
+      ]
+    },
+    {
+      "name": "budget_band",
+      "label": "Budget Band",
+      "type": "enumeration",
+      "fieldType": "select",
+      "groupName": "project_details",
+      "description": "Approximate budget range for the project",
+      "options": [
+        { "label": "Under £15,000", "value": "under-15k", "displayOrder": 1 },
+        { "label": "£15,000 - £40,000", "value": "15k-40k", "displayOrder": 2 },
+        { "label": "£40,000 - £100,000", "value": "40k-100k", "displayOrder": 3 },
+        { "label": "£100,000 - £250,000", "value": "100k-250k", "displayOrder": 4 },
+        { "label": "Over £250,000", "value": "over-250k", "displayOrder": 5 }
+      ]
+    },
+    {
+      "name": "timeline",
+      "label": "Project Timeline",
+      "type": "enumeration",
+      "fieldType": "select",
+      "groupName": "project_details",
+      "description": "When the contact wants to start the project",
+      "options": [
+        { "label": "As Soon As Possible", "value": "asap", "displayOrder": 1 },
+        { "label": "Within 1-3 Months", "value": "1-3-months", "displayOrder": 2 },
+        { "label": "Within 3-6 Months", "value": "3-6-months", "displayOrder": 3 },
+        { "label": "Within 6-12 Months", "value": "6-12-months", "displayOrder": 4 },
+        { "label": "Just Exploring Options", "value": "just-exploring", "displayOrder": 5 }
+      ]
+    },
+    {
+      "name": "conservation_area",
+      "label": "Conservation Area",
+      "type": "enumeration",
+      "fieldType": "radio",
+      "groupName": "property_information",
+      "description": "Is the property in a conservation area?",
+      "options": [
+        { "label": "Yes", "value": "yes", "displayOrder": 1 },
+        { "label": "No", "value": "no", "displayOrder": 2 },
+        { "label": "Unsure", "value": "unsure", "displayOrder": 3 }
+      ]
+    },
+    {
+      "name": "listed_building",
+      "label": "Listed Building",
+      "type": "enumeration",
+      "fieldType": "radio",
+      "groupName": "property_information",
+      "options": [
+        { "label": "Not Listed", "value": "not-listed", "displayOrder": 1 },
+        { "label": "Grade I", "value": "grade-1", "displayOrder": 2 },
+        { "label": "Grade II", "value": "grade-2", "displayOrder": 3 },
+        { "label": "Grade II*", "value": "grade-2-star", "displayOrder": 4 },
+        { "label": "Locally Listed", "value": "locally-listed", "displayOrder": 5 }
+      ]
+    },
+    {
+      "name": "lead_score",
+      "label": "AI Lead Score",
+      "type": "number",
+      "fieldType": "number",
+      "groupName": "qualification",
+      "description": "AI-calculated lead score (0-100)"
+    },
+    {
+      "name": "lead_source",
+      "label": "Lead Source",
+      "type": "enumeration",
+      "fieldType": "select",
+      "groupName": "qualification",
+      "options": [
+        { "label": "WhatsApp", "value": "whatsapp", "displayOrder": 1 },
+        { "label": "Website Form", "value": "website", "displayOrder": 2 },
+        { "label": "Phone Call", "value": "phone", "displayOrder": 3 },
+        { "label": "Email", "value": "email", "displayOrder": 4 },
+        { "label": "Referral", "value": "referral", "displayOrder": 5 },
+        { "label": "Google Ads", "value": "google-ads", "displayOrder": 6 },
+        { "label": "Houzz", "value": "houzz", "displayOrder": 7 },
+        { "label": "Instagram", "value": "instagram", "displayOrder": 8 },
+        { "label": "Checkatrade", "value": "checkatrade", "displayOrder": 9 }
+      ]
+    },
+    {
+      "name": "preferred_contact_method",
+      "label": "Preferred Contact Method",
+      "type": "enumeration",
+      "fieldType": "select",
+      "groupName": "contactinformation",
+      "options": [
+        { "label": "WhatsApp", "value": "whatsapp", "displayOrder": 1 },
+        { "label": "Email", "value": "email", "displayOrder": 2 },
+        { "label": "Phone Call", "value": "phone", "displayOrder": 3 }
+      ]
+    },
+    {
+      "name": "best_time_to_contact",
+      "label": "Best Time to Contact",
+      "type": "enumeration",
+      "fieldType": "select",
+      "groupName": "contactinformation",
+      "options": [
+        { "label": "Morning (9am-12pm)", "value": "morning", "displayOrder": 1 },
+        { "label": "Afternoon (12pm-5pm)", "value": "afternoon", "displayOrder": 2 },
+        { "label": "Evening (5pm-8pm)", "value": "evening", "displayOrder": 3 },
+        { "label": "Any Time", "value": "anytime", "displayOrder": 4 }
+      ]
+    },
+    {
+      "name": "marketing_consent",
+      "label": "Marketing Consent",
+      "type": "bool",
+      "fieldType": "booleancheckbox",
+      "groupName": "consent",
+      "description": "GDPR marketing consent"
+    },
+    {
+      "name": "consent_timestamp",
+      "label": "Consent Timestamp",
+      "type": "datetime",
+      "fieldType": "date",
+      "groupName": "consent"
+    },
+    {
+      "name": "ai_qualification_notes",
+      "label": "AI Qualification Notes",
+      "type": "string",
+      "fieldType": "textarea",
+      "groupName": "qualification",
+      "description": "Notes from AI qualification process"
+    },
+    {
+      "name": "specific_requirements",
+      "label": "Specific Requirements",
+      "type": "string",
+      "fieldType": "textarea",
+      "groupName": "project_details",
+      "description": "Specific project requirements mentioned by the contact"
+    },
+    {
+      "name": "referral_source",
+      "label": "Referral Source",
+      "type": "string",
+      "fieldType": "text",
+      "groupName": "qualification",
+      "description": "Name of person/company who referred this lead"
+    }
+  ],
+
+  "dealProperties": [
+    {
+      "name": "service_type",
+      "label": "Service Type",
+      "type": "enumeration",
+      "fieldType": "select",
+      "groupName": "project_details",
+      "options": [
+        { "label": "Kitchen Extension", "value": "kitchen-extension" },
+        { "label": "Loft Conversion", "value": "loft-conversion" },
+        { "label": "Bathroom", "value": "bathroom" },
+        { "label": "Full Renovation", "value": "full-renovation" },
+        { "label": "Basement", "value": "basement" },
+        { "label": "Structural", "value": "structural" },
+        { "label": "Maintenance", "value": "maintenance" }
+      ]
+    },
+    {
+      "name": "priority",
+      "label": "Lead Priority",
+      "type": "enumeration",
+      "fieldType": "select",
+      "groupName": "qualification",
+      "options": [
+        { "label": "🔥 Hot", "value": "hot", "displayOrder": 1 },
+        { "label": "🟡 Warm", "value": "warm", "displayOrder": 2 },
+        { "label": "🔵 Cool", "value": "cool", "displayOrder": 3 },
+        { "label": "❄️ Cold", "value": "cold", "displayOrder": 4 }
+      ]
+    },
+    {
+      "name": "survey_date",
+      "label": "Survey Date",
+      "type": "date",
+      "fieldType": "date",
+      "groupName": "timeline"
+    },
+    {
+      "name": "survey_time",
+      "label": "Survey Time",
+      "type": "string",
+      "fieldType": "text",
+      "groupName": "timeline"
+    },
+    {
+      "name": "survey_notes",
+      "label": "Survey Notes",
+      "type": "string",
+      "fieldType": "textarea",
+      "groupName": "timeline"
+    },
+    {
+      "name": "quote_number",
+      "label": "Quote Number",
+      "type": "string",
+      "fieldType": "text",
+      "groupName": "quotes"
+    },
+    {
+      "name": "quote_sent_date",
+      "label": "Quote Sent Date",
+      "type": "date",
+      "fieldType": "date",
+      "groupName": "quotes"
+    },
+    {
+      "name": "quote_amount",
+      "label": "Quote Amount",
+      "type": "number",
+      "fieldType": "number",
+      "groupName": "quotes",
+      "description": "Total quoted amount including VAT"
+    },
+    {
+      "name": "quote_document_url",
+      "label": "Quote Document URL",
+      "type": "string",
+      "fieldType": "text",
+      "groupName": "quotes"
+    },
+    {
+      "name": "quote_version",
+      "label": "Quote Version",
+      "type": "number",
+      "fieldType": "number",
+      "groupName": "quotes"
+    },
+    {
+      "name": "project_duration_weeks",
+      "label": "Project Duration (Weeks)",
+      "type": "number",
+      "fieldType": "number",
+      "groupName": "project_details"
+    },
+    {
+      "name": "project_sqm",
+      "label": "Project Area (m²)",
+      "type": "number",
+      "fieldType": "number",
+      "groupName": "project_details"
+    },
+    {
+      "name": "planning_required",
+      "label": "Planning Required",
+      "type": "enumeration",
+      "fieldType": "select",
+      "groupName": "planning",
+      "options": [
+        { "label": "Yes - Full Planning", "value": "full-planning" },
+        { "label": "No - Permitted Development", "value": "pd" },
+        { "label": "Prior Approval Required", "value": "prior-approval" },
+        { "label": "TBC - Survey Needed", "value": "tbc" }
+      ]
+    },
+    {
+      "name": "planning_ref",
+      "label": "Planning Reference",
+      "type": "string",
+      "fieldType": "text",
+      "groupName": "planning"
+    },
+    {
+      "name": "planning_status",
+      "label": "Planning Status",
+      "type": "enumeration",
+      "fieldType": "select",
+      "groupName": "planning",
+      "options": [
+        { "label": "Not Required", "value": "not-required" },
+        { "label": "Application In Progress", "value": "in-progress" },
+        { "label": "Approved", "value": "approved" },
+        { "label": "Refused", "value": "refused" },
+        { "label": "Appeal Pending", "value": "appeal" }
+      ]
+    },
+    {
+      "name": "party_wall_required",
+      "label": "Party Wall Required",
+      "type": "bool",
+      "fieldType": "booleancheckbox",
+      "groupName": "planning"
+    },
+    {
+      "name": "party_wall_neighbours",
+      "label": "Party Wall Neighbours",
+      "type": "number",
+      "fieldType": "number",
+      "groupName": "planning",
+      "description": "Number of neighbours requiring party wall notices"
+    },
+    {
+      "name": "contract_number",
+      "label": "Contract Number",
+      "type": "string",
+      "fieldType": "text",
+      "groupName": "contracts"
+    },
+    {
+      "name": "contract_signed_date",
+      "label": "Contract Signed Date",
+      "type": "date",
+      "fieldType": "date",
+      "groupName": "contracts"
+    },
+    {
+      "name": "contract_document_url",
+      "label": "Contract Document URL",
+      "type": "string",
+      "fieldType": "text",
+      "groupName": "contracts"
+    },
+    {
+      "name": "deposit_amount",
+      "label": "Deposit Amount",
+      "type": "number",
+      "fieldType": "number",
+      "groupName": "payments"
+    },
+    {
+      "name": "deposit_paid_date",
+      "label": "Deposit Paid Date",
+      "type": "date",
+      "fieldType": "date",
+      "groupName": "payments"
+    },
+    {
+      "name": "project_start_date",
+      "label": "Project Start Date",
+      "type": "date",
+      "fieldType": "date",
+      "groupName": "timeline"
+    },
+    {
+      "name": "project_end_date",
+      "label": "Project End Date",
+      "type": "date",
+      "fieldType": "date",
+      "groupName": "timeline"
+    },
+    {
+      "name": "lost_reason",
+      "label": "Lost Reason",
+      "type": "enumeration",
+      "fieldType": "select",
+      "groupName": "outcome",
+      "options": [
+        { "label": "Price Too High", "value": "price" },
+        { "label": "Timing / Schedule", "value": "timing" },
+        { "label": "Chose Competitor", "value": "competitor" },
+        { "label": "Project Cancelled", "value": "cancelled" },
+        { "label": "No Response", "value": "no-response" },
+        { "label": "Budget Changed", "value": "budget-changed" },
+        { "label": "Scope Changed", "value": "scope-changed" },
+        { "label": "Property Sale Fell Through", "value": "property-sale" },
+        { "label": "Other", "value": "other" }
+      ]
+    },
+    {
+      "name": "lost_reason_notes",
+      "label": "Lost Reason Notes",
+      "type": "string",
+      "fieldType": "textarea",
+      "groupName": "outcome"
+    },
+    {
+      "name": "competitor_name",
+      "label": "Competitor Name",
+      "type": "string",
+      "fieldType": "text",
+      "groupName": "outcome",
+      "description": "If lost to competitor, their name"
+    },
+    {
+      "name": "competitor_price",
+      "label": "Competitor Price",
+      "type": "number",
+      "fieldType": "number",
+      "groupName": "outcome"
+    },
+    {
+      "name": "win_notes",
+      "label": "Win Notes",
+      "type": "string",
+      "fieldType": "textarea",
+      "groupName": "outcome",
+      "description": "Why we won this deal"
+    },
+    {
+      "name": "project_folder_url",
+      "label": "Project Folder URL",
+      "type": "string",
+      "fieldType": "text",
+      "groupName": "documentation"
+    },
+    {
+      "name": "assigned_surveyor",
+      "label": "Assigned Surveyor",
+      "type": "string",
+      "fieldType": "text",
+      "groupName": "team"
+    },
+    {
+      "name": "project_manager",
+      "label": "Project Manager",
+      "type": "string",
+      "fieldType": "text",
+      "groupName": "team"
+    }
+  ],
+
+  "propertyGroups": [
+    {
+      "name": "property_information",
+      "label": "Property Information",
+      "displayOrder": 1
+    },
+    {
+      "name": "project_details",
+      "label": "Project Details",
+      "displayOrder": 2
+    },
+    {
+      "name": "qualification",
+      "label": "Lead Qualification",
+      "displayOrder": 3
+    },
+    {
+      "name": "timeline",
+      "label": "Timeline & Scheduling",
+      "displayOrder": 4
+    },
+    {
+      "name": "planning",
+      "label": "Planning & Approvals",
+      "displayOrder": 5
+    },
+    {
+      "name": "quotes",
+      "label": "Quotes",
+      "displayOrder": 6
+    },
+    {
+      "name": "contracts",
+      "label": "Contracts",
+      "displayOrder": 7
+    },
+    {
+      "name": "payments",
+      "label": "Payments",
+      "displayOrder": 8
+    },
+    {
+      "name": "team",
+      "label": "Team Assignment",
+      "displayOrder": 9
+    },
+    {
+      "name": "documentation",
+      "label": "Documentation",
+      "displayOrder": 10
+    },
+    {
+      "name": "outcome",
+      "label": "Deal Outcome",
+      "displayOrder": 11
+    },
+    {
+      "name": "consent",
+      "label": "GDPR & Consent",
+      "displayOrder": 12
+    }
+  ]
+}

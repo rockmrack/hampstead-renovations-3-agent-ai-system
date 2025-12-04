@@ -1,0 +1,458 @@
+{
+  "name": "Enhanced WhatsApp Intake Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp-incoming",
+        "options": {
+          "rawBody": true
+        },
+        "authentication": "headerAuth",
+        "headerAuth": {
+          "name": "X-Webhook-Secret",
+          "value": "={{$env.WEBHOOK_SECRET}}"
+        }
+      },
+      "name": "WhatsApp Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [100, 300],
+      "webhookId": "whatsapp-incoming-v2"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse 360dialog webhook payload\nconst body = $input.all()[0].json;\n\nconst messages = body.messages || [];\nconst statuses = body.statuses || [];\n\n// Handle message vs status update\nif (messages.length > 0) {\n  const msg = messages[0];\n  const contact = body.contacts?.[0] || {};\n  \n  return {\n    json: {\n      type: 'message',\n      messageId: msg.id,\n      from: msg.from,\n      timestamp: new Date(parseInt(msg.timestamp) * 1000).toISOString(),\n      contactName: contact.profile?.name || 'Unknown',\n      messageType: msg.type,\n      text: msg.text?.body || '',\n      hasMedia: ['image', 'document', 'audio', 'video'].includes(msg.type),\n      mediaId: msg.image?.id || msg.document?.id || msg.audio?.id || msg.video?.id || null,\n      mediaCaption: msg.image?.caption || msg.document?.caption || null,\n      isReply: !!msg.context,\n      replyToMessageId: msg.context?.id || null,\n      location: msg.location || null,\n      raw: msg\n    }\n  };\n} else if (statuses.length > 0) {\n  const status = statuses[0];\n  return {\n    json: {\n      type: 'status',\n      messageId: status.id,\n      status: status.status,\n      timestamp: new Date(parseInt(status.timestamp) * 1000).toISOString(),\n      recipientId: status.recipient_id,\n      errors: status.errors || null\n    }\n  };\n}\n\nreturn { json: { type: 'unknown', raw: body } };"
+      },
+      "name": "Parse 360dialog Payload",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.type}}",
+              "operation": "equals",
+              "value2": "message"
+            }
+          ]
+        }
+      },
+      "name": "Is Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": "public",
+        "table": "conversations",
+        "columns": "id, lead_id, message_count, last_message_at",
+        "where": "phone_number = '{{$json.from}}' AND channel = 'whatsapp'",
+        "options": {
+          "limit": 1
+        }
+      },
+      "name": "Find Existing Conversation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [700, 200],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-main",
+          "name": "PostgreSQL Main"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.length > 0}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "name": "Conversation Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "leads",
+        "columns": "phone, name, source, status, created_at",
+        "returnFields": "id",
+        "values": {
+          "phone": "={{$node['Parse 360dialog Payload'].json.from}}",
+          "name": "={{$node['Parse 360dialog Payload'].json.contactName}}",
+          "source": "whatsapp",
+          "status": "new",
+          "created_at": "={{new Date().toISOString()}}"
+        }
+      },
+      "name": "Create New Lead",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [1100, 400],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-main",
+          "name": "PostgreSQL Main"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "conversations",
+        "columns": "lead_id, channel, phone_number, started_at, message_count",
+        "returnFields": "id",
+        "values": {
+          "lead_id": "={{$json.id}}",
+          "channel": "whatsapp",
+          "phone_number": "={{$node['Parse 360dialog Payload'].json.from}}",
+          "started_at": "={{new Date().toISOString()}}",
+          "message_count": 1
+        }
+      },
+      "name": "Create Conversation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [1300, 400],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-main",
+          "name": "PostgreSQL Main"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Build conversation context for AI\nconst messageData = $node['Parse 360dialog Payload'].json;\nconst isExisting = $node['Conversation Exists?'].json?.length > 0;\nconst conversation = isExisting ? $node['Find Existing Conversation'].json[0] : null;\n\nconst hour = new Date().getHours();\nlet timeOfDay = 'morning';\nif (hour >= 12 && hour < 17) timeOfDay = 'afternoon';\nelse if (hour >= 17) timeOfDay = 'evening';\n\nreturn {\n  json: {\n    customer_message: messageData.text,\n    contact_name: messageData.contactName,\n    phone_number: messageData.from,\n    message_id: messageData.messageId,\n    is_existing_conversation: isExisting,\n    conversation_id: conversation?.id || null,\n    lead_id: conversation?.lead_id || null,\n    message_count: conversation?.message_count || 1,\n    time_of_day: timeOfDay,\n    is_business_hours: hour >= 8 && hour < 18 && new Date().getDay() !== 0,\n    timestamp: messageData.timestamp\n  }\n};"
+      },
+      "name": "Build AI Context",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1500, 300]
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-20250514",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "={{$env.LEAD_QUALIFIER_PROMPT}}"
+            },
+            {
+              "role": "user",
+              "content": "Customer message from {{$json.contact_name}}:\n\n{{$json.customer_message}}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 2000
+        }
+      },
+      "name": "Claude - Extract & Qualify",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.2,
+      "position": [1700, 300],
+      "credentials": {
+        "anthropicApi": {
+          "id": "anthropic-api",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse Claude response and prepare for next steps\nconst response = $input.all()[0].json;\nlet qualification;\n\ntry {\n  // Extract JSON from response\n  const content = response.message?.content?.[0]?.text || response.content || '';\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    qualification = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No JSON found in response');\n  }\n} catch (e) {\n  qualification = {\n    qualification: { score: 50, priority: 'warm' },\n    recommended_action: { type: 'request-info' },\n    error: e.message\n  };\n}\n\nconst context = $node['Build AI Context'].json;\n\nreturn {\n  json: {\n    ...context,\n    extracted_data: qualification.extracted_data || {},\n    qualification: qualification.qualification || {},\n    recommended_action: qualification.recommended_action || {},\n    clarifications_needed: qualification.clarifications_needed || [],\n    metadata: qualification.metadata || {},\n    response_type: qualification.recommended_action?.type || 'request-info'\n  }\n};"
+      },
+      "name": "Parse Qualification",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1900, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": "public",
+        "table": "leads",
+        "updateKey": "id",
+        "columns": "lead_score, postcode, service_type, budget_band, timeline, qualified_at, raw_qualification",
+        "values": {
+          "id": "={{$json.lead_id}}",
+          "lead_score": "={{$json.qualification.score || 50}}",
+          "postcode": "={{$json.extracted_data.location?.postcode_full}}",
+          "service_type": "={{$json.extracted_data.service_type?.primary}}",
+          "budget_band": "={{$json.extracted_data.budget?.band}}",
+          "timeline": "={{$json.extracted_data.timeline?.category}}",
+          "qualified_at": "={{new Date().toISOString()}}",
+          "raw_qualification": "={{JSON.stringify($json)}}"
+        }
+      },
+      "name": "Update Lead Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [2100, 200],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-main",
+          "name": "PostgreSQL Main"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-20250514",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "={{$env.WHATSAPP_RESPONDER_PROMPT}}"
+            },
+            {
+              "role": "user",
+              "content": "Generate a WhatsApp response.\n\nCustomer message: {{$json.customer_message}}\nContact name: {{$json.contact_name}}\nResponse type: {{$json.response_type}}\nTime of day: {{$json.time_of_day}}\nIs business hours: {{$json.is_business_hours}}\n\nExtracted data:\n{{JSON.stringify($json.extracted_data, null, 2)}}\n\nQualification:\n{{JSON.stringify($json.qualification, null, 2)}}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 500
+        }
+      },
+      "name": "Claude - Generate Response",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.2,
+      "position": [2100, 400],
+      "credentials": {
+        "anthropicApi": {
+          "id": "anthropic-api",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract response text\nconst response = $input.all()[0].json;\nconst responseText = response.message?.content?.[0]?.text || response.content || 'Thank you for your message. We\\'ll be in touch soon.';\n\nreturn {\n  json: {\n    response_text: responseText.trim(),\n    phone_number: $node['Parse Qualification'].json.phone_number,\n    message_id: $node['Parse Qualification'].json.message_id,\n    qualification: $node['Parse Qualification'].json.qualification\n  }\n};"
+      },
+      "name": "Format Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2300, 400]
+    },
+    {
+      "parameters": {
+        "requestMethod": "POST",
+        "url": "https://waba.360dialog.io/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {},
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "D360-API-KEY",
+              "value": "={{$env.DIALOG360_API_KEY}}"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "to",
+              "value": "={{$json.phone_number}}"
+            },
+            {
+              "name": "type",
+              "value": "text"
+            },
+            {
+              "name": "text",
+              "value": "={\"body\": \"{{$json.response_text.replace(/\"/g, '\\\\\"').replace(/\\n/g, '\\\\n')}}\"}"
+            }
+          ]
+        }
+      },
+      "name": "Send WhatsApp Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2500, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$node['Parse Qualification'].json.qualification.score}}",
+              "operation": "largerEqual",
+              "value2": 70
+            }
+          ]
+        }
+      },
+      "name": "Is Hot Lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2300, 200]
+    },
+    {
+      "parameters": {
+        "channel": "#leads-hot",
+        "text": "🔥 *HOT LEAD - Immediate Action Required*\n\n*Name:* {{$node['Parse Qualification'].json.contact_name}}\n*Phone:* {{$node['Parse Qualification'].json.phone_number}}\n*Score:* {{$node['Parse Qualification'].json.qualification.score}}/100\n*Priority:* {{$node['Parse Qualification'].json.qualification.priority}}\n\n*Project:* {{$node['Parse Qualification'].json.extracted_data.service_type?.primary}}\n*Location:* {{$node['Parse Qualification'].json.extracted_data.location?.postcode_area || 'Unknown'}}\n*Budget:* {{$node['Parse Qualification'].json.extracted_data.budget?.band}}\n*Timeline:* {{$node['Parse Qualification'].json.extracted_data.timeline?.category}}\n\n*Message:* {{$node['Parse Qualification'].json.customer_message}}\n\n_Response sent automatically. Please follow up within 30 minutes._",
+        "otherOptions": {}
+      },
+      "name": "Notify Slack - Hot Lead",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [2500, 100],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-api",
+          "name": "Slack API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "audit_log",
+        "columns": "entity_type, entity_id, action, actor, old_value, new_value, created_at",
+        "values": {
+          "entity_type": "lead",
+          "entity_id": "={{$node['Parse Qualification'].json.lead_id}}",
+          "action": "whatsapp_message_received",
+          "actor": "system",
+          "old_value": "=null",
+          "new_value": "={{JSON.stringify({message: $node['Parse Qualification'].json.customer_message, response: $json.response_text, qualification_score: $node['Parse Qualification'].json.qualification.score})}}",
+          "created_at": "={{new Date().toISOString()}}"
+        }
+      },
+      "name": "Log to Audit Trail",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [2700, 400],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-main",
+          "name": "PostgreSQL Main"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Update status log - message delivered\nreturn { json: { status: 'completed', timestamp: new Date().toISOString() } };"
+      },
+      "name": "Status Update Handler",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [700, 450]
+    }
+  ],
+  "connections": {
+    "WhatsApp Webhook": {
+      "main": [
+        [{ "node": "Parse 360dialog Payload", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse 360dialog Payload": {
+      "main": [
+        [{ "node": "Is Message?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is Message?": {
+      "main": [
+        [{ "node": "Find Existing Conversation", "type": "main", "index": 0 }],
+        [{ "node": "Status Update Handler", "type": "main", "index": 0 }]
+      ]
+    },
+    "Find Existing Conversation": {
+      "main": [
+        [{ "node": "Conversation Exists?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Conversation Exists?": {
+      "main": [
+        [{ "node": "Build AI Context", "type": "main", "index": 0 }],
+        [{ "node": "Create New Lead", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create New Lead": {
+      "main": [
+        [{ "node": "Create Conversation", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create Conversation": {
+      "main": [
+        [{ "node": "Build AI Context", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build AI Context": {
+      "main": [
+        [{ "node": "Claude - Extract & Qualify", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude - Extract & Qualify": {
+      "main": [
+        [{ "node": "Parse Qualification", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Qualification": {
+      "main": [
+        [
+          { "node": "Update Lead Record", "type": "main", "index": 0 },
+          { "node": "Claude - Generate Response", "type": "main", "index": 0 },
+          { "node": "Is Hot Lead?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Claude - Generate Response": {
+      "main": [
+        [{ "node": "Format Response", "type": "main", "index": 0 }]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [{ "node": "Send WhatsApp Reply", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send WhatsApp Reply": {
+      "main": [
+        [{ "node": "Log to Audit Trail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is Hot Lead?": {
+      "main": [
+        [{ "node": "Notify Slack - Hot Lead", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "error-handler-workflow"
+  },
+  "staticData": null,
+  "tags": [
+    { "name": "agent-1" },
+    { "name": "whatsapp" },
+    { "name": "lead-intake" }
+  ],
+  "pinData": {},
+  "versionId": "2.0.0"
+}
