@@ -1,0 +1,486 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# HAMPSTEAD RENOVATIONS - 3-AGENT AI SYSTEM
+# Docker Compose Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Usage:
+#   Development: docker-compose up -d
+#   Production:  docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+version: '3.8'
+
+services:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # N8N - WORKFLOW ORCHESTRATION
+  # ─────────────────────────────────────────────────────────────────────────────
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: hampstead-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      # Basic Auth
+      - N8N_BASIC_AUTH_ACTIVE=${N8N_BASIC_AUTH_ACTIVE:-true}
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD}
+      
+      # Host Configuration
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=${N8N_PROTOCOL:-https}
+      - WEBHOOK_URL=${WEBHOOK_URL:-https://localhost:5678/}
+      
+      # Database (PostgreSQL)
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB:-hampstead}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER:-hampstead}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      
+      # Execution Settings
+      - EXECUTIONS_DATA_PRUNE=${EXECUTIONS_DATA_PRUNE:-true}
+      - EXECUTIONS_DATA_MAX_AGE=${EXECUTIONS_DATA_MAX_AGE:-168}
+      - EXECUTIONS_DATA_SAVE_ON_ERROR=all
+      - EXECUTIONS_DATA_SAVE_ON_SUCCESS=all
+      - EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS=true
+      
+      # Timezone
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-Europe/London}
+      - TZ=${TZ:-Europe/London}
+      
+      # External Hooks (for custom integrations)
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_HIRING_BANNER_ENABLED=false
+      
+      # Queue mode for reliability
+      - EXECUTIONS_MODE=queue
+      - QUEUE_BULL_REDIS_HOST=redis
+      - QUEUE_BULL_REDIS_PORT=6379
+      
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./agent-1-lead-intake/n8n-workflows:/home/node/workflows/agent-1:ro
+      - ./agent-2-sales-crm/n8n-workflows:/home/node/workflows/agent-2:ro
+      - ./agent-3-office-ops/n8n-workflows:/home/node/workflows/agent-3:ro
+    networks:
+      - hampstead-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5678/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.n8n.rule=Host(`${N8N_HOST}`)"
+      - "traefik.http.services.n8n.loadbalancer.server.port=5678"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # N8N WORKER (Queue Mode)
+  # ─────────────────────────────────────────────────────────────────────────────
+  n8n-worker:
+    image: n8nio/n8n:latest
+    container_name: hampstead-n8n-worker
+    restart: unless-stopped
+    command: worker
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB:-hampstead}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER:-hampstead}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      - EXECUTIONS_MODE=queue
+      - QUEUE_BULL_REDIS_HOST=redis
+      - QUEUE_BULL_REDIS_PORT=6379
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-Europe/London}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - hampstead-network
+    depends_on:
+      - n8n
+      - redis
+      - postgres
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # QUOTE BUILDER - FASTAPI MICROSERVICE
+  # ─────────────────────────────────────────────────────────────────────────────
+  quote-builder:
+    build:
+      context: ./agent-3-office-ops/quote-builder
+      dockerfile: Dockerfile
+    container_name: hampstead-quote-builder
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # AI
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-5-20250514}
+      
+      # HubSpot
+      - HUBSPOT_API_KEY=${HUBSPOT_API_KEY}
+      
+      # AWS S3
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_S3_BUCKET=${AWS_S3_BUCKET:-hampstead-renovations-docs}
+      - AWS_REGION=${AWS_REGION:-eu-west-2}
+      
+      # Database
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      
+      # Redis
+      - REDIS_URL=redis://redis:6379
+      
+      # Company Details
+      - COMPANY_NAME=${COMPANY_NAME:-Hampstead Renovations Ltd}
+      - COMPANY_ADDRESS=${COMPANY_ADDRESS}
+      - COMPANY_PHONE=${COMPANY_PHONE:-020 7946 0958}
+      - COMPANY_EMAIL=${COMPANY_EMAIL:-info@hampsteadrenovations.co.uk}
+      - COMPANY_WEBSITE=${COMPANY_WEBSITE:-www.hampsteadrenovations.co.uk}
+      - COMPANY_NUMBER=${COMPANY_NUMBER}
+      - COMPANY_VAT_NUMBER=${COMPANY_VAT_NUMBER}
+      
+      # Quote Settings
+      - QUOTE_VALIDITY_DAYS=${QUOTE_VALIDITY_DAYS:-30}
+      - QUOTE_VAT_RATE=${QUOTE_VAT_RATE:-0.20}
+      - LONDON_LABOUR_MULTIPLIER=${LONDON_LABOUR_MULTIPLIER:-1.34}
+      
+      # Environment
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      
+    volumes:
+      - ./agent-3-office-ops/quote-builder:/app:ro
+      - quote_builder_cache:/app/.cache
+    networks:
+      - hampstead-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.quote-builder.rule=Host(`api.${N8N_HOST}`) && PathPrefix(`/quotes`)"
+      - "traefik.http.services.quote-builder.loadbalancer.server.port=8000"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # CONTRACT GENERATOR - FASTAPI MICROSERVICE
+  # ─────────────────────────────────────────────────────────────────────────────
+  contract-generator:
+    build:
+      context: ./agent-3-office-ops/contract-generator
+      dockerfile: Dockerfile
+    container_name: hampstead-contract-generator
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - HUBSPOT_API_KEY=${HUBSPOT_API_KEY}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_S3_BUCKET=${AWS_S3_BUCKET_CONTRACTS:-hampstead-renovations-contracts}
+      - AWS_REGION=${AWS_REGION:-eu-west-2}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - COMPANY_NAME=${COMPANY_NAME:-Hampstead Renovations Ltd}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    networks:
+      - hampstead-network
+    depends_on:
+      - postgres
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # INVOICE GENERATOR - FASTAPI MICROSERVICE
+  # ─────────────────────────────────────────────────────────────────────────────
+  invoice-generator:
+    build:
+      context: ./agent-3-office-ops/invoice-generator
+      dockerfile: Dockerfile
+    container_name: hampstead-invoice-generator
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    environment:
+      - HUBSPOT_API_KEY=${HUBSPOT_API_KEY}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_S3_BUCKET=${AWS_S3_BUCKET_INVOICES:-hampstead-renovations-invoices}
+      - AWS_REGION=${AWS_REGION:-eu-west-2}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - COMPANY_NAME=${COMPANY_NAME:-Hampstead Renovations Ltd}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    networks:
+      - hampstead-network
+    depends_on:
+      - postgres
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # WEB FORM - REACT FRONTEND
+  # ─────────────────────────────────────────────────────────────────────────────
+  web-form:
+    build:
+      context: ./web-form
+      dockerfile: Dockerfile
+    container_name: hampstead-web-form
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    environment:
+      - VITE_API_URL=${API_URL:-https://api.hampsteadrenovations.co.uk}
+      - VITE_WEBHOOK_URL=${WEBHOOK_URL}
+    networks:
+      - hampstead-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.web-form.rule=Host(`form.${N8N_HOST}`)"
+      - "traefik.http.services.web-form.loadbalancer.server.port=80"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # POSTGRESQL DATABASE
+  # ─────────────────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: hampstead-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-hampstead}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-hampstead}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./shared/database/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - hampstead-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hampstead} -d ${POSTGRES_DB:-hampstead}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: >
+      postgres
+        -c shared_buffers=256MB
+        -c max_connections=100
+        -c effective_cache_size=768MB
+        -c maintenance_work_mem=128MB
+        -c checkpoint_completion_target=0.9
+        -c wal_buffers=16MB
+        -c default_statistics_target=100
+        -c random_page_cost=1.1
+        -c effective_io_concurrency=200
+        -c work_mem=16MB
+        -c min_wal_size=1GB
+        -c max_wal_size=4GB
+        -c max_worker_processes=4
+        -c max_parallel_workers_per_gather=2
+        -c max_parallel_workers=4
+        -c max_parallel_maintenance_workers=2
+        -c log_timezone=Europe/London
+        -c timezone=Europe/London
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # REDIS CACHE & QUEUE
+  # ─────────────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: hampstead-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./infrastructure/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - hampstead-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server /usr/local/etc/redis/redis.conf
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # CLOUDFLARE TUNNEL (Production)
+  # ─────────────────────────────────────────────────────────────────────────────
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: hampstead-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - hampstead-network
+    depends_on:
+      - n8n
+      - quote-builder
+    profiles:
+      - production
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # TRAEFIK REVERSE PROXY (Development)
+  # ─────────────────────────────────────────────────────────────────────────────
+  traefik:
+    image: traefik:v2.10
+    container_name: hampstead-traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--log.level=INFO"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./infrastructure/traefik:/etc/traefik:ro
+    networks:
+      - hampstead-network
+    profiles:
+      - development
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # PROMETHEUS MONITORING
+  # ─────────────────────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: hampstead-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - hampstead-network
+    profiles:
+      - monitoring
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # GRAFANA DASHBOARDS
+  # ─────────────────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.1.0
+    container_name: hampstead-grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=https://grafana.${N8N_HOST}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infrastructure/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infrastructure/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - hampstead-network
+    depends_on:
+      - prometheus
+    profiles:
+      - monitoring
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # POSTGRES BACKUP (Production)
+  # ─────────────────────────────────────────────────────────────────────────────
+  postgres-backup:
+    image: prodrigestivill/postgres-backup-local:15
+    container_name: hampstead-postgres-backup
+    restart: unless-stopped
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=${POSTGRES_DB:-hampstead}
+      - POSTGRES_USER=${POSTGRES_USER:-hampstead}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - SCHEDULE=@daily
+      - BACKUP_KEEP_DAYS=7
+      - BACKUP_KEEP_WEEKS=4
+      - BACKUP_KEEP_MONTHS=6
+      - HEALTHCHECK_PORT=8080
+    volumes:
+      - ./backups/postgres:/backups
+    networks:
+      - hampstead-network
+    depends_on:
+      - postgres
+    profiles:
+      - production
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# VOLUMES
+# ═══════════════════════════════════════════════════════════════════════════════
+volumes:
+  n8n_data:
+    driver: local
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  quote_builder_cache:
+    driver: local
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NETWORKS
+# ═══════════════════════════════════════════════════════════════════════════════
+networks:
+  hampstead-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

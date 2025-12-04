@@ -1,0 +1,407 @@
+{
+  "name": "Pipeline Performance Reporter",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "weekly-trigger",
+      "name": "Every Monday 8AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "generate-report",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "manual-trigger",
+      "name": "Manual Report Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 500],
+      "webhookId": "generate-report"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Pipeline Overview\nWITH date_range AS (\n  SELECT \n    NOW() - INTERVAL '7 days' as week_start,\n    NOW() - INTERVAL '30 days' as month_start,\n    NOW() as now\n)\nSELECT \n  'overview' as report_type,\n  json_build_object(\n    'total_leads_week', (SELECT COUNT(*) FROM leads WHERE created_at >= (SELECT week_start FROM date_range)),\n    'total_leads_month', (SELECT COUNT(*) FROM leads WHERE created_at >= (SELECT month_start FROM date_range)),\n    'hot_leads', (SELECT COUNT(*) FROM leads WHERE qualification = 'HOT' AND status NOT IN ('converted', 'lost')),\n    'warm_leads', (SELECT COUNT(*) FROM leads WHERE qualification = 'WARM' AND status NOT IN ('converted', 'lost')),\n    'avg_lead_score', (SELECT ROUND(AVG(lead_score)::numeric, 1) FROM leads WHERE created_at >= (SELECT month_start FROM date_range)),\n    'conversion_rate', (SELECT ROUND((COUNT(*) FILTER (WHERE status = 'converted')::numeric / NULLIF(COUNT(*), 0) * 100)::numeric, 1) FROM leads WHERE created_at >= (SELECT month_start FROM date_range)),\n    'total_pipeline_value', (SELECT COALESCE(SUM(amount), 0) FROM deals WHERE status NOT IN ('won', 'lost'))\n  ) as data;",
+        "options": {}
+      },
+      "id": "fetch-overview-metrics",
+      "name": "Fetch Overview Metrics",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [300, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Stage Distribution\nSELECT \n  stage,\n  COUNT(*) as count,\n  COALESCE(SUM(amount), 0) as total_value,\n  ROUND(AVG(EXTRACT(EPOCH FROM (NOW() - stage_entered_at)) / 86400)::numeric, 1) as avg_days_in_stage\nFROM deals\nWHERE status NOT IN ('won', 'lost')\nGROUP BY stage\nORDER BY \n  CASE stage\n    WHEN 'new_lead' THEN 1\n    WHEN 'contacted' THEN 2\n    WHEN 'survey_scheduled' THEN 3\n    WHEN 'survey_completed' THEN 4\n    WHEN 'quote_sent' THEN 5\n    WHEN 'negotiation' THEN 6\n    WHEN 'contract_sent' THEN 7\n    ELSE 8\n  END;",
+        "options": {}
+      },
+      "id": "fetch-stage-distribution",
+      "name": "Fetch Stage Distribution",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [300, 450],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Top Deals at Risk\nSELECT \n  d.deal_name,\n  d.amount,\n  d.stage,\n  d.urgency_score,\n  d.priority,\n  d.is_overdue,\n  EXTRACT(DAY FROM (NOW() - d.last_checked_at))::int as days_since_activity,\n  dm.analysis->>'summary' as ai_summary\nFROM deal_monitoring d\nLEFT JOIN deal_monitoring dm ON d.deal_id = dm.deal_id\nWHERE d.is_overdue = true OR d.urgency_score > 70\nORDER BY d.amount DESC, d.urgency_score DESC\nLIMIT 10;",
+        "options": {}
+      },
+      "id": "fetch-deals-at-risk",
+      "name": "Fetch Deals at Risk",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [300, 600],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Won/Lost Analysis (Last 30 Days)\nSELECT \n  'wins_losses' as metric_type,\n  json_build_object(\n    'won_count', COUNT(*) FILTER (WHERE status = 'won'),\n    'won_value', COALESCE(SUM(amount) FILTER (WHERE status = 'won'), 0),\n    'lost_count', COUNT(*) FILTER (WHERE status = 'lost'),\n    'lost_value', COALESCE(SUM(amount) FILTER (WHERE status = 'lost'), 0),\n    'win_rate', ROUND(\n      (COUNT(*) FILTER (WHERE status = 'won')::numeric / \n       NULLIF(COUNT(*) FILTER (WHERE status IN ('won', 'lost')), 0) * 100)::numeric, 1\n    ),\n    'avg_deal_size_won', ROUND(AVG(amount) FILTER (WHERE status = 'won')::numeric, 0),\n    'avg_days_to_close', ROUND(AVG(\n      EXTRACT(DAY FROM (closed_at - created_at))\n    ) FILTER (WHERE status = 'won')::numeric, 0)\n  ) as data\nFROM deals\nWHERE \n  status IN ('won', 'lost')\n  AND closed_at >= NOW() - INTERVAL '30 days';",
+        "options": {}
+      },
+      "id": "fetch-wins-losses",
+      "name": "Fetch Wins/Losses",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [300, 750],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Lead Source Performance\nSELECT \n  COALESCE(source, 'Unknown') as source,\n  COUNT(*) as lead_count,\n  ROUND(AVG(lead_score)::numeric, 1) as avg_score,\n  COUNT(*) FILTER (WHERE qualification = 'HOT') as hot_count,\n  COUNT(*) FILTER (WHERE status = 'converted') as converted_count,\n  ROUND(\n    (COUNT(*) FILTER (WHERE status = 'converted')::numeric / \n     NULLIF(COUNT(*), 0) * 100)::numeric, 1\n  ) as conversion_rate\nFROM leads\nWHERE created_at >= NOW() - INTERVAL '30 days'\nGROUP BY source\nORDER BY lead_count DESC\nLIMIT 10;",
+        "options": {}
+      },
+      "id": "fetch-source-performance",
+      "name": "Fetch Source Performance",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [500, 450],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Compile all report data\nconst overview = $('Fetch Overview Metrics').first().json;\nconst stages = $('Fetch Stage Distribution').all().map(i => i.json);\nconst atRisk = $('Fetch Deals at Risk').all().map(i => i.json);\nconst winsLosses = $('Fetch Wins/Losses').first().json;\nconst sources = $('Fetch Source Performance').all().map(i => i.json);\n\nconst report = {\n  generatedAt: new Date().toISOString(),\n  period: {\n    start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],\n    end: new Date().toISOString().split('T')[0]\n  },\n  overview: overview.data || {},\n  stageDistribution: stages,\n  dealsAtRisk: atRisk,\n  winsLosses: winsLosses.data || {},\n  sourcePerformance: sources,\n  \n  // Calculate key insights\n  insights: []\n};\n\n// Generate insights\nconst overviewData = report.overview;\n\nif (overviewData.hot_leads > 5) {\n  report.insights.push({\n    type: 'opportunity',\n    message: `${overviewData.hot_leads} hot leads in pipeline - prioritize follow-ups`,\n    priority: 'high'\n  });\n}\n\nif (overviewData.conversion_rate < 20) {\n  report.insights.push({\n    type: 'warning',\n    message: `Conversion rate is ${overviewData.conversion_rate}% - review qualification process`,\n    priority: 'medium'\n  });\n}\n\nif (atRisk.length > 5) {\n  const totalAtRisk = atRisk.reduce((sum, d) => sum + (d.amount || 0), 0);\n  report.insights.push({\n    type: 'alert',\n    message: `£${totalAtRisk.toLocaleString()} in pipeline at risk across ${atRisk.length} deals`,\n    priority: 'high'\n  });\n}\n\n// Top performing source\nif (sources.length > 0) {\n  const topSource = sources.reduce((best, current) => \n    (current.conversion_rate || 0) > (best.conversion_rate || 0) ? current : best\n  );\n  if (topSource.conversion_rate > 0) {\n    report.insights.push({\n      type: 'insight',\n      message: `Best lead source: ${topSource.source} with ${topSource.conversion_rate}% conversion rate`,\n      priority: 'info'\n    });\n  }\n}\n\nreturn { json: report };"
+      },
+      "id": "compile-report",
+      "name": "Compile Report Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 400]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "list",
+          "value": "pipeline_reports"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "report_date": "={{ $json.generatedAt }}",
+            "period_start": "={{ $json.period.start }}",
+            "period_end": "={{ $json.period.end }}",
+            "report_data": "={{ JSON.stringify($json) }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "save-report",
+      "name": "Save Report to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [900, 400],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.MANAGEMENT_EMAIL }}",
+        "subject": "📊 Weekly Pipeline Report - {{ new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) }}",
+        "emailType": "html",
+        "message": "=<html>\n<head>\n<style>\nbody { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 20px; background: #f5f5f5; }\n.header { background: linear-gradient(135deg, #1a365d 0%, #2c5282 100%); color: white; padding: 30px; text-align: center; border-radius: 12px 12px 0 0; }\n.header h1 { margin: 0; font-size: 28px; }\n.content { background: white; padding: 30px; border-radius: 0 0 12px 12px; }\n.metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin: 20px 0; }\n.metric-card { background: #f8f9fa; padding: 20px; border-radius: 8px; text-align: center; }\n.metric-value { font-size: 32px; font-weight: bold; color: #1a365d; }\n.metric-label { font-size: 12px; color: #666; text-transform: uppercase; }\n.metric-change { font-size: 12px; margin-top: 5px; }\n.positive { color: #28a745; }\n.negative { color: #dc3545; }\n.section { margin: 30px 0; }\n.section h2 { color: #1a365d; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }\n.table { width: 100%; border-collapse: collapse; margin: 15px 0; }\n.table th, .table td { padding: 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }\n.table th { background: #f8f9fa; font-weight: bold; }\n.priority-high { color: #dc3545; }\n.priority-medium { color: #ffc107; }\n.insight-box { padding: 15px; border-radius: 8px; margin: 10px 0; }\n.insight-opportunity { background: #d4edda; border-left: 4px solid #28a745; }\n.insight-warning { background: #fff3cd; border-left: 4px solid #ffc107; }\n.insight-alert { background: #f8d7da; border-left: 4px solid #dc3545; }\n.insight-info { background: #d1ecf1; border-left: 4px solid #17a2b8; }\n.footer { text-align: center; margin-top: 30px; padding: 20px; color: #666; font-size: 12px; }\n</style>\n</head>\n<body>\n<div class=\"header\">\n<h1>📊 Weekly Pipeline Report</h1>\n<p>{{ $json.period.start }} to {{ $json.period.end }}</p>\n</div>\n\n<div class=\"content\">\n\n<div class=\"metrics-grid\">\n<div class=\"metric-card\">\n<div class=\"metric-value\">{{ $json.overview.total_leads_week || 0 }}</div>\n<div class=\"metric-label\">New Leads (Week)</div>\n</div>\n<div class=\"metric-card\">\n<div class=\"metric-value\">£{{ ($json.overview.total_pipeline_value || 0).toLocaleString() }}</div>\n<div class=\"metric-label\">Pipeline Value</div>\n</div>\n<div class=\"metric-card\">\n<div class=\"metric-value\">{{ $json.overview.conversion_rate || 0 }}%</div>\n<div class=\"metric-label\">Conversion Rate</div>\n</div>\n<div class=\"metric-card\">\n<div class=\"metric-value\">{{ $json.overview.hot_leads || 0 }}</div>\n<div class=\"metric-label\">Hot Leads</div>\n</div>\n</div>\n\n<div class=\"section\">\n<h2>💡 Key Insights</h2>\n{{ $json.insights.map(i => '<div class=\"insight-box insight-' + i.type + '\"><strong>' + i.type.toUpperCase() + ':</strong> ' + i.message + '</div>').join('') || '<p>No significant insights this week.</p>' }}\n</div>\n\n<div class=\"section\">\n<h2>📈 Stage Distribution</h2>\n<table class=\"table\">\n<tr><th>Stage</th><th>Deals</th><th>Value</th><th>Avg Days</th></tr>\n{{ $json.stageDistribution.map(s => '<tr><td>' + s.stage + '</td><td>' + s.count + '</td><td>£' + (s.total_value || 0).toLocaleString() + '</td><td>' + (s.avg_days_in_stage || '-') + '</td></tr>').join('') }}\n</table>\n</div>\n\n<div class=\"section\">\n<h2>⚠️ Deals Requiring Attention</h2>\n{{ $json.dealsAtRisk.length > 0 ? '<table class=\"table\"><tr><th>Deal</th><th>Value</th><th>Stage</th><th>Priority</th></tr>' + $json.dealsAtRisk.slice(0, 5).map(d => '<tr><td>' + d.deal_name + '</td><td>£' + (d.amount || 0).toLocaleString() + '</td><td>' + d.stage + '</td><td class=\"priority-' + (d.priority || 'medium').toLowerCase() + '\">' + (d.priority || 'MEDIUM') + '</td></tr>').join('') + '</table>' : '<p>✅ No deals at critical risk this week.</p>' }}\n</div>\n\n<div class=\"section\">\n<h2>🏆 Wins & Losses (30 Days)</h2>\n<div class=\"metrics-grid\" style=\"grid-template-columns: repeat(3, 1fr);\">\n<div class=\"metric-card\">\n<div class=\"metric-value positive\">{{ $json.winsLosses.won_count || 0 }}</div>\n<div class=\"metric-label\">Deals Won</div>\n<div class=\"metric-change positive\">£{{ ($json.winsLosses.won_value || 0).toLocaleString() }}</div>\n</div>\n<div class=\"metric-card\">\n<div class=\"metric-value negative\">{{ $json.winsLosses.lost_count || 0 }}</div>\n<div class=\"metric-label\">Deals Lost</div>\n<div class=\"metric-change negative\">£{{ ($json.winsLosses.lost_value || 0).toLocaleString() }}</div>\n</div>\n<div class=\"metric-card\">\n<div class=\"metric-value\">{{ $json.winsLosses.win_rate || 0 }}%</div>\n<div class=\"metric-label\">Win Rate</div>\n<div class=\"metric-change\">{{ $json.winsLosses.avg_days_to_close || '-' }} days avg</div>\n</div>\n</div>\n</div>\n\n<div class=\"section\">\n<h2>🎯 Lead Source Performance</h2>\n<table class=\"table\">\n<tr><th>Source</th><th>Leads</th><th>Avg Score</th><th>Hot</th><th>Converted</th><th>Conv. Rate</th></tr>\n{{ $json.sourcePerformance.map(s => '<tr><td>' + s.source + '</td><td>' + s.lead_count + '</td><td>' + (s.avg_score || '-') + '</td><td>' + (s.hot_count || 0) + '</td><td>' + (s.converted_count || 0) + '</td><td>' + (s.conversion_rate || 0) + '%</td></tr>').join('') }}\n</table>\n</div>\n\n</div>\n\n<div class=\"footer\">\n<p>Generated automatically by Hampstead Renovations AI System</p>\n<p>Report ID: {{ Date.now() }} | {{ new Date().toISOString() }}</p>\n</div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "send-email-report",
+      "name": "Email Report to Management",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1100, 300],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credentials",
+          "name": "SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "channel": "#sales-reports",
+        "text": "=📊 *Weekly Pipeline Report*\n_{{ $json.period.start }} to {{ $json.period.end }}_\n\n*Key Metrics:*\n• New Leads (Week): {{ $json.overview.total_leads_week || 0 }}\n• Pipeline Value: £{{ ($json.overview.total_pipeline_value || 0).toLocaleString() }}\n• Hot Leads: {{ $json.overview.hot_leads || 0 }}\n• Conversion Rate: {{ $json.overview.conversion_rate || 0 }}%\n\n*Wins/Losses (30 days):*\n✅ Won: {{ $json.winsLosses.won_count || 0 }} deals (£{{ ($json.winsLosses.won_value || 0).toLocaleString() }})\n❌ Lost: {{ $json.winsLosses.lost_count || 0 }} deals\n📈 Win Rate: {{ $json.winsLosses.win_rate || 0 }}%\n\n*Insights:*\n{{ $json.insights.slice(0, 3).map(i => '• ' + i.message).join('\\n') || '• No significant insights this week' }}\n\n{{ $json.dealsAtRisk.length > 0 ? '⚠️ *' + $json.dealsAtRisk.length + ' deals require attention*' : '✅ No deals at critical risk' }}\n\n_Full report sent via email_",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "post-to-slack",
+      "name": "Post Summary to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [1100, 500],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "slack-credentials",
+          "name": "Slack OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"report_generated\": \"{{ $json.generatedAt }}\",\n  \"period\": {{ JSON.stringify($json.period) }},\n  \"summary\": {\n    \"leads_week\": {{ $json.overview.total_leads_week || 0 }},\n    \"pipeline_value\": {{ $json.overview.total_pipeline_value || 0 }},\n    \"hot_leads\": {{ $json.overview.hot_leads || 0 }},\n    \"deals_at_risk\": {{ $json.dealsAtRisk.length }},\n    \"insights_count\": {{ $json.insights.length }}\n  }\n}",
+        "options": {}
+      },
+      "id": "webhook-response",
+      "name": "Return Report Summary",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1300, 500]
+    }
+  ],
+  "connections": {
+    "Every Monday 8AM": {
+      "main": [
+        [
+          {
+            "node": "Fetch Overview Metrics",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Stage Distribution",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Deals at Risk",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Wins/Losses",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Source Performance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Report Webhook": {
+      "main": [
+        [
+          {
+            "node": "Fetch Overview Metrics",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Stage Distribution",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Deals at Risk",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Wins/Losses",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Source Performance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Overview Metrics": {
+      "main": [
+        [
+          {
+            "node": "Compile Report Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Stage Distribution": {
+      "main": [
+        [
+          {
+            "node": "Compile Report Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Deals at Risk": {
+      "main": [
+        [
+          {
+            "node": "Compile Report Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Wins/Losses": {
+      "main": [
+        [
+          {
+            "node": "Compile Report Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Source Performance": {
+      "main": [
+        [
+          {
+            "node": "Compile Report Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compile Report Data": {
+      "main": [
+        [
+          {
+            "node": "Save Report to DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Report to DB": {
+      "main": [
+        [
+          {
+            "node": "Email Report to Management",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Post Summary to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Summary to Slack": {
+      "main": [
+        [
+          {
+            "node": "Return Report Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "error-handler"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [
+    {
+      "name": "agent-2",
+      "color": "#4CAF50"
+    },
+    {
+      "name": "sales-crm",
+      "color": "#2196F3"
+    },
+    {
+      "name": "reporting",
+      "color": "#9C27B0"
+    }
+  ]
+}

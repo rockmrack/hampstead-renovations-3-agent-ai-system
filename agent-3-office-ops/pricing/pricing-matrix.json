@@ -1,0 +1,703 @@
+{
+  "kitchen": {
+    "name": "Kitchen Renovation",
+    "description": "Full kitchen renovation including design, installation, and finishing",
+    "base_items": [
+      {
+        "name": "Kitchen Design & Planning",
+        "unit": "fixed",
+        "base_price": 1500,
+        "description": "Professional kitchen design with 3D visualization"
+      },
+      {
+        "name": "Strip Out & Disposal",
+        "unit": "per_sqm",
+        "base_price": 85,
+        "description": "Removal of existing kitchen and responsible disposal"
+      },
+      {
+        "name": "Plastering & Wall Prep",
+        "unit": "per_sqm",
+        "base_price": 45,
+        "description": "Wall preparation and plastering"
+      },
+      {
+        "name": "Flooring (supply & fit)",
+        "unit": "per_sqm",
+        "base_price": 120,
+        "description": "Kitchen flooring - standard specification",
+        "options": {
+          "vinyl": 1.0,
+          "tiles": 1.4,
+          "engineered_wood": 1.8,
+          "natural_stone": 2.5
+        }
+      },
+      {
+        "name": "Electrical First Fix",
+        "unit": "per_point",
+        "base_price": 85,
+        "description": "Electrical points for appliances and lighting"
+      },
+      {
+        "name": "Plumbing First Fix",
+        "unit": "fixed",
+        "base_price": 850,
+        "description": "Plumbing for sink, dishwasher, and washing machine"
+      },
+      {
+        "name": "Kitchen Units (mid-range)",
+        "unit": "per_linear_meter",
+        "base_price": 650,
+        "description": "Supply and installation of kitchen units",
+        "options": {
+          "budget": 0.7,
+          "mid_range": 1.0,
+          "premium": 1.6,
+          "luxury": 2.5
+        }
+      },
+      {
+        "name": "Worktops",
+        "unit": "per_linear_meter",
+        "base_price": 280,
+        "description": "Worktop supply and installation",
+        "options": {
+          "laminate": 0.6,
+          "solid_wood": 1.0,
+          "quartz": 1.8,
+          "granite": 2.2,
+          "marble": 3.0
+        }
+      },
+      {
+        "name": "Splashback/Tiles",
+        "unit": "per_sqm",
+        "base_price": 95,
+        "description": "Wall tiling behind work surfaces"
+      },
+      {
+        "name": "Appliance Installation",
+        "unit": "per_item",
+        "base_price": 120,
+        "description": "Installation of kitchen appliances (excluding supply)"
+      },
+      {
+        "name": "Sink & Tap Installation",
+        "unit": "fixed",
+        "base_price": 350,
+        "description": "Supply and fit standard sink and tap"
+      },
+      {
+        "name": "Lighting (supply & fit)",
+        "unit": "per_point",
+        "base_price": 180,
+        "description": "Kitchen lighting including under-cabinet"
+      },
+      {
+        "name": "Decoration",
+        "unit": "per_sqm",
+        "base_price": 25,
+        "description": "Painting and finishing"
+      }
+    ],
+    "typical_sqm_range": [8, 25],
+    "typical_timeline_weeks": [4, 8],
+    "margin_percentage": 25
+  },
+  "bathroom": {
+    "name": "Bathroom Renovation",
+    "description": "Complete bathroom renovation including sanitaryware and tiling",
+    "base_items": [
+      {
+        "name": "Bathroom Design",
+        "unit": "fixed",
+        "base_price": 750,
+        "description": "Professional bathroom design"
+      },
+      {
+        "name": "Strip Out & Disposal",
+        "unit": "fixed",
+        "base_price": 650,
+        "description": "Removal of existing bathroom suite and tiles"
+      },
+      {
+        "name": "Plumbing Works",
+        "unit": "fixed",
+        "base_price": 1800,
+        "description": "Complete plumbing including waste and supply",
+        "options": {
+          "basic_repositioning": 1.0,
+          "significant_repositioning": 1.5,
+          "complete_reconfiguration": 2.2
+        }
+      },
+      {
+        "name": "Electrical Works",
+        "unit": "fixed",
+        "base_price": 650,
+        "description": "Electrical for lighting, extractor, and heated towel rail"
+      },
+      {
+        "name": "Tanking/Waterproofing",
+        "unit": "per_sqm",
+        "base_price": 65,
+        "description": "Waterproof membrane for wet areas"
+      },
+      {
+        "name": "Floor Tiling",
+        "unit": "per_sqm",
+        "base_price": 110,
+        "description": "Floor tiles supply and installation",
+        "options": {
+          "ceramic": 1.0,
+          "porcelain": 1.3,
+          "natural_stone": 2.0,
+          "underfloor_heating": 1.5
+        }
+      },
+      {
+        "name": "Wall Tiling",
+        "unit": "per_sqm",
+        "base_price": 95,
+        "description": "Wall tiles supply and installation"
+      },
+      {
+        "name": "Sanitaryware (mid-range)",
+        "unit": "fixed",
+        "base_price": 2500,
+        "description": "WC, basin, bath/shower - supply and fit",
+        "options": {
+          "budget": 0.6,
+          "mid_range": 1.0,
+          "premium": 2.0,
+          "luxury": 3.5
+        }
+      },
+      {
+        "name": "Shower Enclosure/Screen",
+        "unit": "fixed",
+        "base_price": 850,
+        "description": "Glass shower enclosure supply and fit"
+      },
+      {
+        "name": "Heated Towel Rail",
+        "unit": "fixed",
+        "base_price": 450,
+        "description": "Supply and installation"
+      },
+      {
+        "name": "Vanity Unit",
+        "unit": "fixed",
+        "base_price": 650,
+        "description": "Basin vanity unit supply and fit"
+      },
+      {
+        "name": "Bathroom Accessories",
+        "unit": "fixed",
+        "base_price": 350,
+        "description": "Mirror, toilet roll holder, towel hooks etc"
+      },
+      {
+        "name": "Decoration",
+        "unit": "per_sqm",
+        "base_price": 28,
+        "description": "Ceiling painting and finishing"
+      }
+    ],
+    "typical_sqm_range": [4, 12],
+    "typical_timeline_weeks": [2, 4],
+    "margin_percentage": 25
+  },
+  "extension": {
+    "name": "House Extension",
+    "description": "Single or double storey extension",
+    "base_items": [
+      {
+        "name": "Architectural Design",
+        "unit": "fixed",
+        "base_price": 3500,
+        "description": "Full architectural drawings and planning submission"
+      },
+      {
+        "name": "Structural Engineering",
+        "unit": "fixed",
+        "base_price": 1800,
+        "description": "Structural calculations and specifications"
+      },
+      {
+        "name": "Planning Application",
+        "unit": "fixed",
+        "base_price": 462,
+        "description": "Planning application fees (if required)"
+      },
+      {
+        "name": "Building Control",
+        "unit": "fixed",
+        "base_price": 850,
+        "description": "Building control application and inspections"
+      },
+      {
+        "name": "Party Wall Agreement",
+        "unit": "per_neighbour",
+        "base_price": 1200,
+        "description": "Party wall surveyor fees per neighbour"
+      },
+      {
+        "name": "Groundworks & Foundations",
+        "unit": "per_sqm",
+        "base_price": 350,
+        "description": "Excavation, foundations, and drainage"
+      },
+      {
+        "name": "Superstructure (Single Storey)",
+        "unit": "per_sqm",
+        "base_price": 1650,
+        "description": "Walls, roof structure, and weatherproofing",
+        "options": {
+          "single_storey": 1.0,
+          "double_storey": 1.7
+        }
+      },
+      {
+        "name": "Roof Covering",
+        "unit": "per_sqm",
+        "base_price": 180,
+        "description": "Roof tiles or flat roof covering",
+        "options": {
+          "flat_roof": 0.9,
+          "pitched_tiles": 1.0,
+          "slate": 1.6
+        }
+      },
+      {
+        "name": "Windows & Doors",
+        "unit": "per_sqm_opening",
+        "base_price": 650,
+        "description": "Supply and installation",
+        "options": {
+          "upvc": 0.8,
+          "aluminium": 1.0,
+          "timber": 1.5
+        }
+      },
+      {
+        "name": "Bi-fold/Sliding Doors",
+        "unit": "per_linear_meter",
+        "base_price": 1200,
+        "description": "Large format doors to garden"
+      },
+      {
+        "name": "First Fix Electrics",
+        "unit": "per_sqm",
+        "base_price": 65,
+        "description": "Wiring, consumer unit upgrade if needed"
+      },
+      {
+        "name": "First Fix Plumbing",
+        "unit": "fixed",
+        "base_price": 1200,
+        "description": "Extension of services if required"
+      },
+      {
+        "name": "Plastering",
+        "unit": "per_sqm",
+        "base_price": 48,
+        "description": "Internal walls and ceiling plastering"
+      },
+      {
+        "name": "Flooring",
+        "unit": "per_sqm",
+        "base_price": 85,
+        "description": "Screed and floor finish"
+      },
+      {
+        "name": "Second Fix",
+        "unit": "per_sqm",
+        "base_price": 95,
+        "description": "Sockets, switches, skirting, architraves"
+      },
+      {
+        "name": "Decoration",
+        "unit": "per_sqm",
+        "base_price": 32,
+        "description": "Full decoration including mist coat"
+      },
+      {
+        "name": "External Works",
+        "unit": "fixed",
+        "base_price": 2500,
+        "description": "Drainage, patio reinstatement, landscaping"
+      }
+    ],
+    "typical_sqm_range": [15, 50],
+    "typical_timeline_weeks": [12, 20],
+    "margin_percentage": 20
+  },
+  "loft_conversion": {
+    "name": "Loft Conversion",
+    "description": "Convert loft space into habitable rooms",
+    "base_items": [
+      {
+        "name": "Architectural Design",
+        "unit": "fixed",
+        "base_price": 2800,
+        "description": "Loft conversion drawings"
+      },
+      {
+        "name": "Structural Engineering",
+        "unit": "fixed",
+        "base_price": 1500,
+        "description": "Structural calculations"
+      },
+      {
+        "name": "Building Control",
+        "unit": "fixed",
+        "base_price": 750,
+        "description": "Building control application"
+      },
+      {
+        "name": "Scaffolding",
+        "unit": "fixed",
+        "base_price": 2200,
+        "description": "Scaffolding hire for duration"
+      },
+      {
+        "name": "Structural Works",
+        "unit": "fixed",
+        "base_price": 8500,
+        "description": "Steel beams, floor strengthening",
+        "options": {
+          "velux": 1.0,
+          "dormer_rear": 1.6,
+          "dormer_l_shaped": 2.2,
+          "mansard": 2.8
+        }
+      },
+      {
+        "name": "Dormer Construction",
+        "unit": "fixed",
+        "base_price": 12000,
+        "description": "Dormer build including cladding",
+        "options": {
+          "single_dormer": 1.0,
+          "double_dormer": 1.7,
+          "full_width": 2.4
+        }
+      },
+      {
+        "name": "Roof Windows (Velux)",
+        "unit": "per_window",
+        "base_price": 1200,
+        "description": "Supply and install roof windows"
+      },
+      {
+        "name": "Staircase",
+        "unit": "fixed",
+        "base_price": 3500,
+        "description": "New staircase to loft",
+        "options": {
+          "standard": 1.0,
+          "space_saver": 0.8,
+          "spiral": 1.5,
+          "bespoke": 2.0
+        }
+      },
+      {
+        "name": "Insulation",
+        "unit": "per_sqm",
+        "base_price": 55,
+        "description": "Roof and wall insulation to building regs"
+      },
+      {
+        "name": "Plasterboard & Plaster",
+        "unit": "per_sqm",
+        "base_price": 52,
+        "description": "Walls and ceilings"
+      },
+      {
+        "name": "Electrics",
+        "unit": "fixed",
+        "base_price": 2200,
+        "description": "Full electrical installation"
+      },
+      {
+        "name": "Plumbing (if ensuite)",
+        "unit": "fixed",
+        "base_price": 2800,
+        "description": "Ensuite bathroom plumbing"
+      },
+      {
+        "name": "Flooring",
+        "unit": "per_sqm",
+        "base_price": 75,
+        "description": "Floor boarding and finish"
+      },
+      {
+        "name": "Windows & Glazing",
+        "unit": "per_sqm",
+        "base_price": 550,
+        "description": "Dormer windows and glazing"
+      },
+      {
+        "name": "Second Fix & Decoration",
+        "unit": "per_sqm",
+        "base_price": 65,
+        "description": "Skirting, doors, decoration"
+      }
+    ],
+    "typical_sqm_range": [20, 45],
+    "typical_timeline_weeks": [8, 14],
+    "margin_percentage": 22
+  },
+  "basement": {
+    "name": "Basement Conversion",
+    "description": "Convert or excavate basement space",
+    "base_items": [
+      {
+        "name": "Structural Survey",
+        "unit": "fixed",
+        "base_price": 1200,
+        "description": "Detailed structural assessment"
+      },
+      {
+        "name": "Architectural Design",
+        "unit": "fixed",
+        "base_price": 4500,
+        "description": "Basement conversion design"
+      },
+      {
+        "name": "Structural Engineering",
+        "unit": "fixed",
+        "base_price": 3500,
+        "description": "Complex structural calculations"
+      },
+      {
+        "name": "Party Wall Agreement",
+        "unit": "per_neighbour",
+        "base_price": 1500,
+        "description": "Party wall surveyor - essential for basements"
+      },
+      {
+        "name": "Building Control",
+        "unit": "fixed",
+        "base_price": 1200,
+        "description": "Building control for basement"
+      },
+      {
+        "name": "Underpinning",
+        "unit": "per_linear_meter",
+        "base_price": 1800,
+        "description": "Foundation underpinning",
+        "options": {
+          "traditional": 1.0,
+          "mini_piled": 1.8
+        }
+      },
+      {
+        "name": "Excavation",
+        "unit": "per_cubic_meter",
+        "base_price": 250,
+        "description": "Soil excavation and removal"
+      },
+      {
+        "name": "Waterproofing System",
+        "unit": "per_sqm",
+        "base_price": 280,
+        "description": "Type A, B, or C waterproofing",
+        "options": {
+          "type_a_tanking": 1.0,
+          "type_b_structural": 1.3,
+          "type_c_cavity_drain": 0.9
+        }
+      },
+      {
+        "name": "Sump & Pump",
+        "unit": "fixed",
+        "base_price": 2800,
+        "description": "Sump chamber and pump system"
+      },
+      {
+        "name": "Concrete Floor",
+        "unit": "per_sqm",
+        "base_price": 120,
+        "description": "New concrete floor slab"
+      },
+      {
+        "name": "Lightwell/External Access",
+        "unit": "fixed",
+        "base_price": 8500,
+        "description": "Create lightwell for natural light"
+      },
+      {
+        "name": "MVHR System",
+        "unit": "fixed",
+        "base_price": 4500,
+        "description": "Mechanical ventilation heat recovery"
+      },
+      {
+        "name": "Electrics",
+        "unit": "fixed",
+        "base_price": 3500,
+        "description": "Full electrical installation"
+      },
+      {
+        "name": "Plumbing",
+        "unit": "fixed",
+        "base_price": 3200,
+        "description": "Drainage, heating extension"
+      },
+      {
+        "name": "Staircase",
+        "unit": "fixed",
+        "base_price": 4500,
+        "description": "Basement access staircase"
+      },
+      {
+        "name": "Internal Finishes",
+        "unit": "per_sqm",
+        "base_price": 180,
+        "description": "Walls, ceiling, flooring, decoration"
+      }
+    ],
+    "typical_sqm_range": [25, 80],
+    "typical_timeline_weeks": [16, 28],
+    "margin_percentage": 18
+  },
+  "refurbishment": {
+    "name": "Full Refurbishment",
+    "description": "Complete internal refurbishment of property",
+    "base_items": [
+      {
+        "name": "Survey & Schedule of Works",
+        "unit": "fixed",
+        "base_price": 1500,
+        "description": "Detailed survey and specification"
+      },
+      {
+        "name": "Strip Out",
+        "unit": "per_sqm",
+        "base_price": 35,
+        "description": "Removal of existing finishes"
+      },
+      {
+        "name": "Structural Repairs",
+        "unit": "provisional",
+        "base_price": 5000,
+        "description": "Allowance for structural works"
+      },
+      {
+        "name": "Damp Treatment",
+        "unit": "per_linear_meter",
+        "base_price": 120,
+        "description": "DPC and damp treatment if required"
+      },
+      {
+        "name": "Rewire",
+        "unit": "per_sqm",
+        "base_price": 85,
+        "description": "Complete electrical rewire"
+      },
+      {
+        "name": "Replumb",
+        "unit": "per_bathroom",
+        "base_price": 2500,
+        "description": "Plumbing replacement"
+      },
+      {
+        "name": "Heating System",
+        "unit": "per_sqm",
+        "base_price": 65,
+        "description": "New heating system",
+        "options": {
+          "combi_boiler": 1.0,
+          "system_boiler": 1.2,
+          "heat_pump": 2.5
+        }
+      },
+      {
+        "name": "Plastering",
+        "unit": "per_sqm",
+        "base_price": 42,
+        "description": "Re-plastering throughout"
+      },
+      {
+        "name": "Joinery",
+        "unit": "per_door",
+        "base_price": 350,
+        "description": "Internal doors supply and fit"
+      },
+      {
+        "name": "Skirting & Architraves",
+        "unit": "per_linear_meter",
+        "base_price": 25,
+        "description": "Supply and fit"
+      },
+      {
+        "name": "Flooring",
+        "unit": "per_sqm",
+        "base_price": 75,
+        "description": "Floor finishes throughout"
+      },
+      {
+        "name": "Decoration",
+        "unit": "per_sqm",
+        "base_price": 28,
+        "description": "Full decoration"
+      },
+      {
+        "name": "Windows (if replacing)",
+        "unit": "per_window",
+        "base_price": 850,
+        "description": "Window replacement if required"
+      }
+    ],
+    "typical_sqm_range": [60, 200],
+    "typical_timeline_weeks": [8, 16],
+    "margin_percentage": 22
+  },
+  "modifiers": {
+    "location": {
+      "NW3": 1.15,
+      "NW6": 1.10,
+      "NW11": 1.08,
+      "NW8": 1.12,
+      "NW1": 1.10,
+      "default": 1.0
+    },
+    "property_age": {
+      "pre_1900": 1.20,
+      "1900_1930": 1.15,
+      "1930_1960": 1.10,
+      "1960_1990": 1.05,
+      "post_1990": 1.0
+    },
+    "access": {
+      "easy": 1.0,
+      "moderate": 1.05,
+      "difficult": 1.15,
+      "very_difficult": 1.25
+    },
+    "property_type": {
+      "detached": 1.0,
+      "semi_detached": 1.02,
+      "terraced": 1.05,
+      "flat_ground": 1.08,
+      "flat_upper": 1.15,
+      "listed_building": 1.35
+    },
+    "urgency": {
+      "flexible": 1.0,
+      "normal": 1.0,
+      "priority": 1.10,
+      "urgent": 1.20
+    }
+  },
+  "meta": {
+    "currency": "GBP",
+    "vat_rate": 0.20,
+    "last_updated": "2024-01-15",
+    "version": "2.0",
+    "notes": "Prices are indicative and subject to site survey. All prices exclude VAT unless stated."
+  }
+}

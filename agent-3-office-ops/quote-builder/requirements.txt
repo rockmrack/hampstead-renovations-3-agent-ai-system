@@ -1,0 +1,53 @@
+# Hampstead Renovations - Quote Builder Dependencies
+# Python 3.11+ required
+
+# PDF Generation
+reportlab==4.1.0
+weasyprint==60.2
+PyPDF2==3.0.1
+Pillow>=10.0.0
+
+# Document templating
+Jinja2>=3.1.2
+MarkupSafe>=2.1.3
+
+# API Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+
+# Database
+psycopg2-binary>=2.9.9
+SQLAlchemy>=2.0.25
+asyncpg>=0.29.0
+
+# Validation & Serialization
+pydantic>=2.5.3
+pydantic-settings>=2.1.0
+email-validator>=2.1.0
+
+# HTTP Client
+httpx>=0.26.0
+aiohttp>=3.9.1
+
+# AWS S3
+boto3>=1.34.0
+
+# Date/Time handling
+python-dateutil>=2.8.2
+
+# Environment
+python-dotenv>=1.0.0
+
+# Logging & Monitoring
+structlog>=24.1.0
+prometheus-client>=0.19.0
+
+# Security
+cryptography>=41.0.7
+
+# Testing
+pytest>=7.4.4
+pytest-asyncio>=0.23.3
+pytest-cov>=4.1.0
+httpx>=0.26.0

@@ -1,0 +1,609 @@
+{
+  "name": "Deal Stage Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 2
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Run Every 2 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.hubapi.com/crm/v3/objects/deals",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "100"
+            },
+            {
+              "name": "properties",
+              "value": "dealname,dealstage,amount,closedate,createdate,hs_lastmodifieddate,lead_source,project_types,property_type,urgency,lead_score,pipeline"
+            },
+            {
+              "name": "associations",
+              "value": "contacts"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-hubspot-deals",
+      "name": "Fetch Active Deals from HubSpot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [300, 300],
+      "credentials": {
+        "hubspotOAuth2Api": {
+          "id": "hubspot-credentials",
+          "name": "HubSpot OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Parse HubSpot deal data and calculate stage metrics\nconst deal = $input.item.json;\nconst properties = deal.properties || deal;\n\n// Deal stage mapping with expected timelines (in hours)\nconst stageConfig = {\n  'appointmentscheduled': { name: 'New Lead', maxHours: 4, order: 1 },\n  'qualifiedtobuy': { name: 'Contacted', maxHours: 48, order: 2 },\n  'presentationscheduled': { name: 'Site Survey Scheduled', maxHours: 168, order: 3 },\n  'decisionmakerboughtin': { name: 'Survey Completed', maxHours: 120, order: 4 },\n  'contractsent': { name: 'Quote Sent', maxHours: 336, order: 5 },\n  'closedwon': { name: 'Won', maxHours: null, order: 8 },\n  'closedlost': { name: 'Lost', maxHours: null, order: 9 }\n};\n\nconst currentStage = properties.dealstage;\nconst stageInfo = stageConfig[currentStage] || { name: 'Unknown', maxHours: 48, order: 0 };\n\n// Calculate time metrics\nconst now = new Date();\nconst createdAt = new Date(properties.createdate);\nconst lastModified = new Date(properties.hs_lastmodifieddate);\n\nconst hoursInStage = Math.floor((now - lastModified) / (1000 * 60 * 60));\nconst daysInStage = Math.floor(hoursInStage / 24);\nconst hoursSinceCreation = Math.floor((now - createdAt) / (1000 * 60 * 60));\n\n// Determine if overdue\nconst isOverdue = stageInfo.maxHours ? hoursInStage > stageInfo.maxHours : false;\nconst overdueHours = isOverdue ? hoursInStage - stageInfo.maxHours : 0;\n\n// Calculate urgency score (0-100)\nlet urgencyScore = 0;\nif (stageInfo.maxHours) {\n  const percentageUsed = (hoursInStage / stageInfo.maxHours) * 100;\n  urgencyScore = Math.min(100, Math.round(percentageUsed));\n}\n\n// Determine priority based on multiple factors\nconst dealAmount = parseFloat(properties.amount) || 0;\nconst leadScore = parseInt(properties.lead_score) || 50;\n\nlet priority = 'MEDIUM';\nif (isOverdue && dealAmount > 100000) priority = 'CRITICAL';\nelse if (isOverdue || (urgencyScore > 80 && dealAmount > 50000)) priority = 'HIGH';\nelse if (urgencyScore < 30 && dealAmount < 30000) priority = 'LOW';\n\n// Skip closed deals from alerting\nconst isActive = !['closedwon', 'closedlost'].includes(currentStage);\n\nreturn {\n  json: {\n    dealId: deal.id,\n    dealName: properties.dealname,\n    currentStage: currentStage,\n    stageName: stageInfo.name,\n    stageOrder: stageInfo.order,\n    amount: dealAmount,\n    leadScore: leadScore,\n    projectTypes: properties.project_types,\n    propertyType: properties.property_type,\n    urgency: properties.urgency,\n    leadSource: properties.lead_source,\n    closeDate: properties.closedate,\n    \n    // Time metrics\n    hoursInStage: hoursInStage,\n    daysInStage: daysInStage,\n    maxHoursAllowed: stageInfo.maxHours,\n    hoursSinceCreation: hoursSinceCreation,\n    lastModified: lastModified.toISOString(),\n    \n    // Status flags\n    isOverdue: isOverdue,\n    overdueHours: overdueHours,\n    urgencyScore: urgencyScore,\n    priority: priority,\n    isActive: isActive,\n    requiresAction: isOverdue || urgencyScore > 70,\n    \n    // Associated contacts\n    contacts: deal.associations?.contacts?.results || []\n  }\n};"
+      },
+      "id": "parse-deal-data",
+      "name": "Parse Deal Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.isActive }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "leftValue": "={{ $json.requiresAction }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "filter-actionable",
+      "name": "Filter Actionable Deals",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-20250514",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 2048
+        },
+        "messages": {
+          "values": [
+            {
+              "type": "system",
+              "content": "={{ $('Read Prompt').item.json.content }}"
+            },
+            {
+              "type": "user",
+              "content": "Analyze this deal and provide recommendations:\n\n---\nDEAL INFORMATION:\n- Deal Name: {{ $json.dealName }}\n- Deal ID: {{ $json.dealId }}\n- Amount: £{{ $json.amount.toLocaleString() }}\n- Lead Score: {{ $json.leadScore }}/100\n\n---\nSTAGE INFORMATION:\n- Current Stage: {{ $json.stageName }} ({{ $json.currentStage }})\n- Days in Stage: {{ $json.daysInStage }}\n- Hours in Stage: {{ $json.hoursInStage }}\n- Max Allowed Hours: {{ $json.maxHoursAllowed || 'N/A' }}\n- Is Overdue: {{ $json.isOverdue }}\n- Overdue by Hours: {{ $json.overdueHours }}\n- Urgency Score: {{ $json.urgencyScore }}/100\n\n---\nPROJECT DETAILS:\n- Project Types: {{ $json.projectTypes || 'Not specified' }}\n- Property Type: {{ $json.propertyType || 'Not specified' }}\n- Client Urgency: {{ $json.urgency || 'Not specified' }}\n- Lead Source: {{ $json.leadSource || 'Unknown' }}\n- Expected Close: {{ $json.closeDate || 'Not set' }}\n\n---\nCURRENT PRIORITY: {{ $json.priority }}\n\nProvide your analysis as valid JSON only."
+            }
+          ]
+        }
+      },
+      "id": "analyze-with-claude",
+      "name": "Analyze with Claude",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.2,
+      "position": [1100, 200],
+      "credentials": {
+        "anthropicApi": {
+          "id": "anthropic-credentials",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "filePath": "/data/prompts/deal-stage-analyzer.txt",
+        "options": {}
+      },
+      "id": "read-prompt",
+      "name": "Read Prompt",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Parse Claude's analysis and merge with deal data\nconst dealData = $('Filter Actionable Deals').item.json;\nlet claudeAnalysis;\n\ntry {\n  const responseText = $input.item.json.message?.content || $input.item.json.text || '';\n  const jsonMatch = responseText.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    claudeAnalysis = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No JSON found');\n  }\n} catch (error) {\n  claudeAnalysis = {\n    analysis: { is_overdue: dealData.isOverdue },\n    recommendations: {\n      immediate_actions: ['Manual review required'],\n      escalation_required: dealData.priority === 'CRITICAL'\n    },\n    automation_triggers: {\n      notify_manager: dealData.priority === 'CRITICAL'\n    },\n    summary: 'Analysis parsing failed - manual review needed'\n  };\n}\n\nreturn {\n  json: {\n    deal: dealData,\n    analysis: claudeAnalysis,\n    processedAt: new Date().toISOString()\n  }\n};"
+      },
+      "id": "merge-analysis",
+      "name": "Merge Analysis with Deal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 200]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "list",
+          "value": "deal_monitoring"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "deal_id": "={{ $json.deal.dealId }}",
+            "deal_name": "={{ $json.deal.dealName }}",
+            "stage": "={{ $json.deal.currentStage }}",
+            "amount": "={{ $json.deal.amount }}",
+            "is_overdue": "={{ $json.deal.isOverdue }}",
+            "urgency_score": "={{ $json.deal.urgencyScore }}",
+            "priority": "={{ $json.deal.priority }}",
+            "analysis": "={{ JSON.stringify($json.analysis) }}",
+            "last_checked_at": "={{ $json.processedAt }}"
+          }
+        },
+        "conflictColumns": "deal_id",
+        "options": {}
+      },
+      "id": "save-analysis",
+      "name": "Save Analysis to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1500, 200],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.analysis.automation_triggers?.notify_manager }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "id": "check-escalation",
+      "name": "Needs Escalation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1700, 200]
+    },
+    {
+      "parameters": {
+        "channel": "#sales-alerts",
+        "text": "=⚠️ *DEAL ALERT - {{ $json.deal.priority }}* ⚠️\n\n*Deal:* {{ $json.deal.dealName }}\n*Value:* £{{ $json.deal.amount.toLocaleString() }}\n*Stage:* {{ $json.deal.stageName }}\n*Days in Stage:* {{ $json.deal.daysInStage }}\n\n*Status:*\n{{ $json.deal.isOverdue ? '🔴 OVERDUE by ' + $json.deal.overdueHours + ' hours' : '🟡 At risk (' + $json.deal.urgencyScore + '% of time used)' }}\n\n*AI Analysis:*\n{{ $json.analysis.summary }}\n\n*Risk Level:* {{ $json.analysis.risk_assessment?.risk_level || 'Unknown' }}\n\n*Immediate Actions:*\n{{ ($json.analysis.recommendations?.immediate_actions || ['Review deal manually']).map(a => '• ' + a).join('\\n') }}\n\n<https://app.hubspot.com/contacts/deals/{{ $json.deal.dealId }}|View Deal in HubSpot>",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "notify-slack",
+      "name": "Alert Slack Channel",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [1900, 100],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "slack-credentials",
+          "name": "Slack OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.SALES_MANAGER_EMAIL }}",
+        "subject": "⚠️ Deal Alert: {{ $json.deal.dealName }} - {{ $json.deal.priority }} Priority",
+        "emailType": "html",
+        "message": "=<html>\n<head>\n<style>\nbody { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; }\n.alert-header { background: {{ $json.deal.priority === 'CRITICAL' ? '#dc3545' : '#ffc107' }}; color: {{ $json.deal.priority === 'CRITICAL' ? 'white' : '#333' }}; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }\n.content { padding: 20px; background: #f8f9fa; border-radius: 0 0 8px 8px; }\n.metric { display: inline-block; padding: 10px 15px; background: white; border-radius: 4px; margin: 5px; }\n.metric-value { font-size: 24px; font-weight: bold; }\n.metric-label { font-size: 12px; color: #666; }\n.actions { background: #e3f2fd; padding: 15px; border-radius: 4px; margin: 15px 0; }\n.btn { display: inline-block; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; margin: 5px; }\n</style>\n</head>\n<body>\n<div class=\"alert-header\">\n<h1>{{ $json.deal.priority === 'CRITICAL' ? '🚨' : '⚠️' }} Deal Requires Attention</h1>\n<p>{{ $json.deal.dealName }}</p>\n</div>\n\n<div class=\"content\">\n<h2>Deal Overview</h2>\n<div>\n<div class=\"metric\">\n<div class=\"metric-value\">£{{ $json.deal.amount.toLocaleString() }}</div>\n<div class=\"metric-label\">Deal Value</div>\n</div>\n<div class=\"metric\">\n<div class=\"metric-value\">{{ $json.deal.daysInStage }}</div>\n<div class=\"metric-label\">Days in Stage</div>\n</div>\n<div class=\"metric\">\n<div class=\"metric-value\">{{ $json.deal.urgencyScore }}%</div>\n<div class=\"metric-label\">Urgency Score</div>\n</div>\n</div>\n\n<h2>Current Status</h2>\n<p><strong>Stage:</strong> {{ $json.deal.stageName }}</p>\n<p><strong>Status:</strong> {{ $json.deal.isOverdue ? 'OVERDUE by ' + $json.deal.overdueHours + ' hours' : 'At risk' }}</p>\n<p><strong>Lead Score:</strong> {{ $json.deal.leadScore }}/100</p>\n\n<h2>AI Analysis</h2>\n<p>{{ $json.analysis.summary }}</p>\n\n<div class=\"actions\">\n<h3>Recommended Actions</h3>\n<ul>\n{{ ($json.analysis.recommendations?.immediate_actions || ['Review deal']).map(a => '<li>' + a + '</li>').join('') }}\n</ul>\n</div>\n\n<p style=\"text-align: center;\">\n<a href=\"https://app.hubspot.com/contacts/deals/{{ $json.deal.dealId }}\" class=\"btn\">View in HubSpot</a>\n<a href=\"tel:\" class=\"btn\" style=\"background: #28a745;\">Call Client</a>\n</p>\n</div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "send-email-alert",
+      "name": "Email Sales Manager",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1900, 250],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credentials",
+          "name": "SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.analysis.automation_triggers?.create_task }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "id": "check-create-task",
+      "name": "Create HubSpot Task?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1700, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/tasks",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"hs_task_subject\": \"Follow-up: {{ $json.deal.dealName }}\",\n    \"hs_task_body\": \"AI-generated task:\\n\\n{{ $json.analysis.summary }}\\n\\nRecommended actions:\\n{{ ($json.analysis.recommendations?.immediate_actions || []).join('\\n- ') }}\",\n    \"hs_task_status\": \"NOT_STARTED\",\n    \"hs_task_priority\": \"{{ $json.deal.priority === 'CRITICAL' ? 'HIGH' : 'MEDIUM' }}\",\n    \"hs_timestamp\": \"{{ Date.now() }}\",\n    \"hs_task_type\": \"TODO\"\n  },\n  \"associations\": [\n    {\n      \"to\": {\n        \"id\": \"{{ $json.deal.dealId }}\"\n      },\n      \"types\": [\n        {\n          \"associationCategory\": \"HUBSPOT_DEFINED\",\n          \"associationTypeId\": 216\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "create-hubspot-task",
+      "name": "Create HubSpot Task",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1900, 400],
+      "credentials": {
+        "hubspotOAuth2Api": {
+          "id": "hubspot-credentials",
+          "name": "HubSpot OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.analysis.automation_triggers?.schedule_follow_up }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "id": "check-schedule-followup",
+      "name": "Schedule Follow-up?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1700, 600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_URL }}/webhook/generate-followup",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"deal_id\": \"{{ $json.deal.dealId }}\",\n  \"deal_name\": \"{{ $json.deal.dealName }}\",\n  \"stage\": \"{{ $json.deal.currentStage }}\",\n  \"amount\": {{ $json.deal.amount }},\n  \"analysis\": {{ JSON.stringify($json.analysis) }},\n  \"scheduled_for\": \"{{ new Date(Date.now() + 24*60*60*1000).toISOString() }}\"\n}",
+        "options": {}
+      },
+      "id": "trigger-followup-workflow",
+      "name": "Trigger Follow-up Workflow",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1900, 600]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "id": "aggregate-results",
+      "name": "Aggregate All Results",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [2100, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Generate summary report\nconst items = $input.item.json.data || [];\n\nconst summary = {\n  timestamp: new Date().toISOString(),\n  total_deals_checked: items.length,\n  critical: items.filter(i => i.deal?.priority === 'CRITICAL').length,\n  high: items.filter(i => i.deal?.priority === 'HIGH').length,\n  medium: items.filter(i => i.deal?.priority === 'MEDIUM').length,\n  low: items.filter(i => i.deal?.priority === 'LOW').length,\n  overdue: items.filter(i => i.deal?.isOverdue).length,\n  total_value_at_risk: items\n    .filter(i => i.deal?.isOverdue || i.deal?.priority === 'CRITICAL')\n    .reduce((sum, i) => sum + (i.deal?.amount || 0), 0),\n  escalations_sent: items.filter(i => i.analysis?.automation_triggers?.notify_manager).length,\n  tasks_created: items.filter(i => i.analysis?.automation_triggers?.create_task).length\n};\n\nreturn { json: summary };"
+      },
+      "id": "generate-summary",
+      "name": "Generate Run Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2300, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "list",
+          "value": "workflow_runs"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workflow_name": "deal-stage-monitor",
+            "run_timestamp": "={{ $json.timestamp }}",
+            "summary": "={{ JSON.stringify($json) }}",
+            "status": "completed"
+          }
+        },
+        "options": {}
+      },
+      "id": "log-workflow-run",
+      "name": "Log Workflow Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2500, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Run Every 2 Hours": {
+      "main": [
+        [
+          {
+            "node": "Fetch Active Deals from HubSpot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Deals from HubSpot": {
+      "main": [
+        [
+          {
+            "node": "Parse Deal Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Deal Data": {
+      "main": [
+        [
+          {
+            "node": "Filter Actionable Deals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Actionable Deals": {
+      "main": [
+        [
+          {
+            "node": "Read Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Read Prompt": {
+      "main": [
+        [
+          {
+            "node": "Analyze with Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze with Claude": {
+      "main": [
+        [
+          {
+            "node": "Merge Analysis with Deal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Analysis with Deal": {
+      "main": [
+        [
+          {
+            "node": "Save Analysis to DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Analysis to DB": {
+      "main": [
+        [
+          {
+            "node": "Needs Escalation?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Create HubSpot Task?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Schedule Follow-up?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Aggregate All Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Escalation?": {
+      "main": [
+        [
+          {
+            "node": "Alert Slack Channel",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email Sales Manager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create HubSpot Task?": {
+      "main": [
+        [
+          {
+            "node": "Create HubSpot Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Follow-up?": {
+      "main": [
+        [
+          {
+            "node": "Trigger Follow-up Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate All Results": {
+      "main": [
+        [
+          {
+            "node": "Generate Run Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Run Summary": {
+      "main": [
+        [
+          {
+            "node": "Log Workflow Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "error-handler"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [
+    {
+      "name": "agent-2",
+      "color": "#4CAF50"
+    },
+    {
+      "name": "sales-crm",
+      "color": "#2196F3"
+    },
+    {
+      "name": "monitoring",
+      "color": "#FF5722"
+    }
+  ]
+}

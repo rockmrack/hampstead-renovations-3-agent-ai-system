@@ -1,0 +1,449 @@
+{
+  "name": "Lead Scoring Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "score-lead",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-score",
+      "name": "Score Lead Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 300],
+      "webhookId": "lead-scorer"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "schedule-rescore",
+      "name": "Hourly Rescore Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [100, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM leads \nWHERE \n  (last_scored_at IS NULL OR last_scored_at < NOW() - INTERVAL '24 hours')\n  AND status NOT IN ('converted', 'lost', 'disqualified')\nORDER BY created_at DESC\nLIMIT 50;",
+        "options": {}
+      },
+      "id": "fetch-leads-to-rescore",
+      "name": "Fetch Leads to Rescore",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [300, 500],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Comprehensive lead scoring algorithm for Hampstead Renovations\n// Factors: Location, Budget, Project Fit, Timeline, Engagement, Source Quality\n\nconst lead = $input.item.json;\n\n// Initialize scoring object\nconst scoring = {\n  factors: {},\n  totalScore: 0,\n  maxScore: 100,\n  qualification: '',\n  priority: '',\n  reasoning: [],\n  recommendations: []\n};\n\n// === FACTOR 1: LOCATION SCORING (Max 25 points) ===\nconst locationScore = () => {\n  let score = 0;\n  const targetPostcodes = ['NW3', 'NW6', 'NW11', 'NW8', 'NW1', 'N6', 'N2'];\n  const secondaryPostcodes = ['NW2', 'NW4', 'NW5', 'NW7', 'NW9', 'NW10', 'N3', 'N10', 'N12'];\n  const location = (lead.location_hints || lead.postcode || lead.area || '').toUpperCase();\n  \n  // Check for target postcodes\n  for (const pc of targetPostcodes) {\n    if (location.includes(pc)) {\n      score = 25;\n      scoring.reasoning.push(`✓ Prime location: ${pc} (our target area)`);\n      return score;\n    }\n  }\n  \n  // Check for secondary postcodes\n  for (const pc of secondaryPostcodes) {\n    if (location.includes(pc)) {\n      score = 18;\n      scoring.reasoning.push(`○ Secondary location: ${pc} (serviceable area)`);\n      return score;\n    }\n  }\n  \n  // Check for North London generally\n  if (location.includes('NW') || location.includes('HAMPSTEAD') || location.includes('HIGHGATE')) {\n    score = 15;\n    scoring.reasoning.push('○ North West London area');\n  } else if (location.includes('LONDON') || location.includes('N ')) {\n    score = 10;\n    scoring.reasoning.push('△ Greater London (may require assessment)');\n  } else if (location) {\n    score = 5;\n    scoring.reasoning.push('△ Location outside typical service area');\n  } else {\n    score = 8; // Unknown location - neutral\n    scoring.reasoning.push('? Location unknown - needs confirmation');\n    scoring.recommendations.push('Confirm property location during callback');\n  }\n  \n  return score;\n};\n\n// === FACTOR 2: PROJECT FIT SCORING (Max 25 points) ===\nconst projectFitScore = () => {\n  let score = 0;\n  const projectTypes = lead.project_types || [];\n  const complexity = lead.project_complexity || lead.complexity || '';\n  \n  // High-value project types for Hampstead Renovations\n  const premiumProjects = ['kitchen', 'bathroom', 'extension', 'loft', 'basement'];\n  const standardProjects = ['refurbishment', 'structural', 'renovation'];\n  const smallProjects = ['decoration', 'painting', 'minor_repairs'];\n  \n  let hasPremium = false;\n  let hasStandard = false;\n  \n  for (const project of projectTypes) {\n    const p = project.toLowerCase();\n    if (premiumProjects.some(pp => p.includes(pp))) hasPremium = true;\n    if (standardProjects.some(sp => p.includes(sp))) hasStandard = true;\n  }\n  \n  if (hasPremium) {\n    score = 20;\n    scoring.reasoning.push(`✓ Premium project type: ${projectTypes.join(', ')}`);\n  } else if (hasStandard) {\n    score = 15;\n    scoring.reasoning.push(`○ Standard renovation project`);\n  } else if (projectTypes.length > 0) {\n    score = 8;\n    scoring.reasoning.push(`△ Smaller scope project`);\n  } else {\n    score = 10;\n    scoring.reasoning.push('? Project type not specified');\n    scoring.recommendations.push('Clarify project scope during consultation');\n  }\n  \n  // Complexity bonus\n  if (complexity.toLowerCase() === 'complex' || complexity.toLowerCase() === 'major') {\n    score += 5;\n    scoring.reasoning.push('✓ Complex project (higher value potential)');\n  }\n  \n  return Math.min(25, score);\n};\n\n// === FACTOR 3: BUDGET INDICATOR SCORING (Max 20 points) ===\nconst budgetScore = () => {\n  let score = 0;\n  const budget = (lead.budget_indicator || lead.budget || '').toLowerCase();\n  const budgetRange = lead.budget_range || '';\n  \n  // Parse budget ranges if provided\n  if (budgetRange) {\n    const numericBudget = parseInt(budgetRange.replace(/[^0-9]/g, ''));\n    if (numericBudget >= 100000) {\n      score = 20;\n      scoring.reasoning.push(`✓ High budget: ${budgetRange}`);\n    } else if (numericBudget >= 50000) {\n      score = 16;\n      scoring.reasoning.push(`✓ Good budget: ${budgetRange}`);\n    } else if (numericBudget >= 20000) {\n      score = 12;\n      scoring.reasoning.push(`○ Moderate budget: ${budgetRange}`);\n    } else {\n      score = 6;\n      scoring.reasoning.push(`△ Limited budget: ${budgetRange}`);\n    }\n  } else if (budget.includes('premium') || budget.includes('high') || budget.includes('flexible')) {\n    score = 18;\n    scoring.reasoning.push('✓ Premium budget indicator');\n  } else if (budget.includes('mid') || budget.includes('moderate')) {\n    score = 12;\n    scoring.reasoning.push('○ Mid-range budget indicator');\n  } else if (budget.includes('budget') || budget.includes('tight') || budget.includes('limited')) {\n    score = 5;\n    scoring.reasoning.push('△ Budget-conscious lead');\n    scoring.recommendations.push('Discuss budget expectations early');\n  } else {\n    score = 10;\n    scoring.reasoning.push('? Budget not indicated');\n  }\n  \n  return score;\n};\n\n// === FACTOR 4: TIMELINE/URGENCY SCORING (Max 15 points) ===\nconst timelineScore = () => {\n  let score = 0;\n  const urgency = (lead.urgency || lead.timeline || '').toLowerCase();\n  \n  if (urgency.includes('urgent') || urgency.includes('asap') || urgency.includes('immediate')) {\n    score = 15;\n    scoring.reasoning.push('✓ Urgent timeline - ready to proceed');\n    scoring.recommendations.push('Prioritize callback - hot lead');\n  } else if (urgency.includes('soon') || urgency.includes('1-3 months') || urgency.includes('this month')) {\n    score = 12;\n    scoring.reasoning.push('✓ Near-term timeline');\n  } else if (urgency.includes('flexible') || urgency.includes('planning')) {\n    score = 8;\n    scoring.reasoning.push('○ Flexible timeline');\n  } else if (urgency.includes('next year') || urgency.includes('long term')) {\n    score = 4;\n    scoring.reasoning.push('△ Long-term planning');\n    scoring.recommendations.push('Add to nurture sequence');\n  } else {\n    score = 7;\n    scoring.reasoning.push('? Timeline not specified');\n  }\n  \n  return score;\n};\n\n// === FACTOR 5: ENGAGEMENT QUALITY SCORING (Max 10 points) ===\nconst engagementScore = () => {\n  let score = 0;\n  \n  // Source quality\n  const source = (lead.source || lead.lead_source || '').toLowerCase();\n  \n  if (source.includes('referral') || source.includes('recommendation')) {\n    score += 5;\n    scoring.reasoning.push('✓ Referral lead (high conversion potential)');\n  } else if (source.includes('website') || source.includes('webform')) {\n    score += 4;\n    scoring.reasoning.push('✓ Website lead (intentional inquiry)');\n  } else if (source.includes('whatsapp')) {\n    score += 4;\n    scoring.reasoning.push('○ WhatsApp lead');\n  } else if (source.includes('voicemail')) {\n    score += 3;\n    scoring.reasoning.push('○ Voicemail lead');\n  } else {\n    score += 2;\n  }\n  \n  // Information completeness\n  let infoScore = 0;\n  if (lead.name) infoScore++;\n  if (lead.email) infoScore++;\n  if (lead.phone) infoScore++;\n  if (lead.project_types?.length > 0) infoScore++;\n  if (lead.location_hints || lead.postcode) infoScore++;\n  \n  score += Math.min(5, infoScore);\n  \n  if (infoScore >= 4) {\n    scoring.reasoning.push('✓ Complete contact information');\n  } else if (infoScore <= 2) {\n    scoring.recommendations.push('Collect missing contact details');\n  }\n  \n  return Math.min(10, score);\n};\n\n// === FACTOR 6: PROPERTY TYPE SCORING (Max 5 points) ===\nconst propertyScore = () => {\n  let score = 0;\n  const propertyType = (lead.property_type || '').toLowerCase();\n  \n  if (propertyType.includes('period') || propertyType.includes('victorian') || propertyType.includes('edwardian')) {\n    score = 5;\n    scoring.reasoning.push('✓ Period property (specialist expertise)');\n  } else if (propertyType.includes('house') || propertyType.includes('detached') || propertyType.includes('semi')) {\n    score = 4;\n    scoring.reasoning.push('✓ House property');\n  } else if (propertyType.includes('flat') || propertyType.includes('apartment')) {\n    score = 3;\n    scoring.reasoning.push('○ Flat/apartment');\n  } else if (propertyType.includes('new_build')) {\n    score = 2;\n    scoring.reasoning.push('△ New build (less renovation typically needed)');\n  } else {\n    score = 2;\n  }\n  \n  return score;\n};\n\n// Calculate all scores\nscoring.factors.location = locationScore();\nscoring.factors.projectFit = projectFitScore();\nscoring.factors.budget = budgetScore();\nscoring.factors.timeline = timelineScore();\nscoring.factors.engagement = engagementScore();\nscoring.factors.property = propertyScore();\n\n// Calculate total score\nscoring.totalScore = Object.values(scoring.factors).reduce((sum, val) => sum + val, 0);\n\n// Determine qualification\nif (scoring.totalScore >= 80) {\n  scoring.qualification = 'HOT';\n  scoring.priority = 'CRITICAL';\n} else if (scoring.totalScore >= 65) {\n  scoring.qualification = 'WARM';\n  scoring.priority = 'HIGH';\n} else if (scoring.totalScore >= 45) {\n  scoring.qualification = 'COOL';\n  scoring.priority = 'MEDIUM';\n} else {\n  scoring.qualification = 'COLD';\n  scoring.priority = 'LOW';\n}\n\n// Add qualification-specific recommendations\nif (scoring.qualification === 'HOT') {\n  scoring.recommendations.unshift('🔥 Priority callback within 1 hour');\n  scoring.recommendations.push('Fast-track to site survey scheduling');\n} else if (scoring.qualification === 'WARM') {\n  scoring.recommendations.unshift('📞 Callback within 4 hours');\n} else if (scoring.qualification === 'COOL') {\n  scoring.recommendations.unshift('📧 Send information pack, follow up in 2-3 days');\n} else {\n  scoring.recommendations.unshift('📋 Add to nurture campaign');\n}\n\nreturn {\n  json: {\n    lead_id: lead.id || lead.lead_id,\n    source_id: lead.source_id,\n    scoring: scoring,\n    scored_at: new Date().toISOString()\n  }\n};"
+      },
+      "id": "calculate-score",
+      "name": "Calculate Lead Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "list",
+          "value": "leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_score": "={{ $json.scoring.totalScore }}",
+            "qualification": "={{ $json.scoring.qualification }}",
+            "priority": "={{ $json.scoring.priority }}",
+            "score_factors": "={{ JSON.stringify($json.scoring.factors) }}",
+            "score_reasoning": "={{ JSON.stringify($json.scoring.reasoning) }}",
+            "recommendations": "={{ JSON.stringify($json.scoring.recommendations) }}",
+            "last_scored_at": "={{ $json.scored_at }}"
+          }
+        },
+        "whereConditions": {
+          "values": [
+            {
+              "column": "id",
+              "value": "={{ $json.lead_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "update-lead-score",
+      "name": "Update Lead Score in DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [700, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.scoring.qualification }}",
+              "rightValue": "HOT",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "id": "check-hot-lead",
+      "name": "Is Hot Lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.lead_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"lead_score\": \"{{ $json.scoring.totalScore }}\",\n    \"lead_qualification\": \"{{ $json.scoring.qualification }}\",\n    \"lead_priority\": \"{{ $json.scoring.priority }}\",\n    \"score_location\": \"{{ $json.scoring.factors.location }}\",\n    \"score_project_fit\": \"{{ $json.scoring.factors.projectFit }}\",\n    \"score_budget\": \"{{ $json.scoring.factors.budget }}\",\n    \"score_timeline\": \"{{ $json.scoring.factors.timeline }}\",\n    \"score_engagement\": \"{{ $json.scoring.factors.engagement }}\",\n    \"score_reasoning\": \"{{ $json.scoring.reasoning.join(' | ') }}\",\n    \"recommended_actions\": \"{{ $json.scoring.recommendations.join(' | ') }}\",\n    \"last_scored_at\": \"{{ $json.scored_at }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "update-hubspot-score",
+      "name": "Update HubSpot Contact Score",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 500],
+      "credentials": {
+        "hubspotOAuth2Api": {
+          "id": "hubspot-credentials",
+          "name": "HubSpot OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "channel": "#sales-alerts",
+        "text": "=🔥 *HOT LEAD ALERT* 🔥\n\n*Lead Score:* {{ $json.scoring.totalScore }}/100 ({{ $json.scoring.qualification }})\n*Priority:* {{ $json.scoring.priority }}\n\n*Score Breakdown:*\n• Location: {{ $json.scoring.factors.location }}/25\n• Project Fit: {{ $json.scoring.factors.projectFit }}/25\n• Budget: {{ $json.scoring.factors.budget }}/20\n• Timeline: {{ $json.scoring.factors.timeline }}/15\n• Engagement: {{ $json.scoring.factors.engagement }}/10\n• Property: {{ $json.scoring.factors.property }}/5\n\n*Analysis:*\n{{ $json.scoring.reasoning.map(r => '• ' + r).join('\\n') }}\n\n*Recommended Actions:*\n{{ $json.scoring.recommendations.map(r => '→ ' + r).join('\\n') }}\n\n<https://app.hubspot.com/contacts/|View in HubSpot>",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "notify-slack-hot",
+      "name": "Notify Slack - Hot Lead",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [1100, 200],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "slack-credentials",
+          "name": "Slack OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "phoneNumber": "={{ $env.TEAM_PHONE_NUMBER }}",
+        "message": "🔥 HOT LEAD!\n\nScore: {{ $json.scoring.totalScore }}/100\nQualification: {{ $json.scoring.qualification }}\n\nTop recommendation:\n{{ $json.scoring.recommendations[0] }}\n\nCheck Slack/HubSpot for details.",
+        "options": {}
+      },
+      "id": "send-sms-hot",
+      "name": "Send SMS Alert",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [1100, 350],
+      "credentials": {
+        "twilioApi": {
+          "id": "twilio-credentials",
+          "name": "Twilio API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"data\": {\n    \"lead_id\": \"{{ $json.lead_id }}\",\n    \"score\": {{ $json.scoring.totalScore }},\n    \"qualification\": \"{{ $json.scoring.qualification }}\",\n    \"priority\": \"{{ $json.scoring.priority }}\",\n    \"factors\": {{ JSON.stringify($json.scoring.factors) }},\n    \"recommendations\": {{ JSON.stringify($json.scoring.recommendations) }}\n  }\n}",
+        "options": {}
+      },
+      "id": "webhook-response",
+      "name": "Return Score Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1100, 500]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Prepare lead data for scoring\nconst input = $input.item.json;\n\n// Handle both webhook (single lead) and batch (from DB)\nconst lead = {\n  id: input.id || input.lead_id,\n  source_id: input.source_id,\n  name: input.name || input.contact_name,\n  email: input.email,\n  phone: input.phone,\n  source: input.source || input.lead_source,\n  location_hints: input.location_hints || input.location,\n  postcode: input.postcode || input.postal_code,\n  area: input.area,\n  property_type: input.property_type,\n  project_types: Array.isArray(input.project_types) \n    ? input.project_types \n    : (typeof input.project_types === 'string' \n      ? JSON.parse(input.project_types || '[]') \n      : []),\n  project_complexity: input.project_complexity || input.complexity,\n  budget_indicator: input.budget_indicator || input.budget,\n  budget_range: input.budget_range,\n  urgency: input.urgency || input.timeline,\n  timeline: input.timeline,\n  raw_data: input.raw_data\n};\n\nreturn { json: lead };"
+      },
+      "id": "normalize-lead-data",
+      "name": "Normalize Lead Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "list",
+          "value": "lead_score_history"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{ $json.lead_id }}",
+            "score": "={{ $json.scoring.totalScore }}",
+            "qualification": "={{ $json.scoring.qualification }}",
+            "factors": "={{ JSON.stringify($json.scoring.factors) }}",
+            "reasoning": "={{ JSON.stringify($json.scoring.reasoning) }}",
+            "scored_at": "={{ $json.scored_at }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "log-score-history",
+      "name": "Log Score to History",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [700, 500],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "id": "batch-leads",
+      "name": "Process in Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [300, 650]
+    },
+    {
+      "parameters": {
+        "amount": 0.5,
+        "unit": "seconds"
+      },
+      "id": "rate-limit-delay",
+      "name": "Rate Limit Delay",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [900, 650]
+    }
+  ],
+  "connections": {
+    "Score Lead Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hourly Rescore Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Leads to Rescore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Leads to Rescore": {
+      "main": [
+        [
+          {
+            "node": "Process in Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Lead Data": {
+      "main": [
+        [
+          {
+            "node": "Calculate Lead Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Lead Score": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Score in DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Lead Score in DB": {
+      "main": [
+        [
+          {
+            "node": "Is Hot Lead?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update HubSpot Contact Score",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Score to History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Hot Lead?": {
+      "main": [
+        [
+          {
+            "node": "Notify Slack - Hot Lead",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send SMS Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Score Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update HubSpot Contact Score": {
+      "main": [
+        [
+          {
+            "node": "Return Score Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process in Batches": {
+      "main": [
+        [
+          {
+            "node": "Normalize Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rate Limit Delay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Limit Delay": {
+      "main": [
+        [
+          {
+            "node": "Process in Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "error-handler"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [
+    {
+      "name": "agent-1",
+      "color": "#1E88E5"
+    },
+    {
+      "name": "lead-scoring",
+      "color": "#FF9800"
+    },
+    {
+      "name": "automation",
+      "color": "#9C27B0"
+    }
+  ]
+}

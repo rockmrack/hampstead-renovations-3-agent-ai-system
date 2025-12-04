@@ -1,0 +1,616 @@
+{
+  "name": "Site Survey Scheduler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "schedule-survey",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Schedule Survey Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 300],
+      "webhookId": "schedule-survey"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Parse incoming survey scheduling request\nconst input = $input.item.json;\n\n// Extract lead/contact information\nconst request = {\n  leadId: input.lead_id || input.leadId,\n  dealId: input.deal_id || input.dealId,\n  contactName: input.contact_name || input.name,\n  contactEmail: input.email,\n  contactPhone: input.phone,\n  propertyAddress: input.address || input.property_address,\n  postcode: input.postcode,\n  propertyType: input.property_type,\n  projectTypes: input.project_types || [],\n  preferredDates: input.preferred_dates || [],\n  preferredTimes: input.preferred_times || ['morning', 'afternoon'],\n  specialRequirements: input.special_requirements || input.notes || '',\n  urgency: input.urgency || 'normal',\n  estimatedDuration: input.estimated_duration || 60, // minutes\n  assignedSurveyor: input.surveyor || null,\n  source: input.source || 'api',\n  requestedAt: new Date().toISOString()\n};\n\n// Validate required fields\nconst errors = [];\nif (!request.contactName) errors.push('Contact name is required');\nif (!request.contactEmail && !request.contactPhone) errors.push('Email or phone required');\nif (!request.propertyAddress && !request.postcode) errors.push('Property address or postcode required');\n\nif (errors.length > 0) {\n  return {\n    json: {\n      success: false,\n      errors: errors,\n      request: request\n    }\n  };\n}\n\nreturn { json: { success: true, request: request } };"
+      },
+      "id": "parse-request",
+      "name": "Parse Survey Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "validate-request",
+      "name": "Valid Request?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+        "authentication": "oAuth2",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "timeMin",
+              "value": "={{ new Date().toISOString() }}"
+            },
+            {
+              "name": "timeMax",
+              "value": "={{ new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString() }}"
+            },
+            {
+              "name": "singleEvents",
+              "value": "true"
+            },
+            {
+              "name": "orderBy",
+              "value": "startTime"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-calendar",
+      "name": "Fetch Surveyor Calendar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 200],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "google-calendar-credentials",
+          "name": "Google Calendar OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Find available time slots for survey\nconst request = $('Parse Survey Request').item.json.request;\nconst calendarEvents = $('Fetch Surveyor Calendar').item.json.items || [];\n\n// Survey configuration\nconst surveyDuration = request.estimatedDuration; // minutes\nconst bufferTime = 30; // minutes between appointments\nconst workingHours = {\n  start: 9, // 9 AM\n  end: 17,  // 5 PM\n  lunchStart: 12,\n  lunchEnd: 13\n};\n\n// Generate next 10 working days\nconst getWorkingDays = (count) => {\n  const days = [];\n  let date = new Date();\n  date.setDate(date.getDate() + 1); // Start from tomorrow\n  \n  while (days.length < count) {\n    const dayOfWeek = date.getDay();\n    if (dayOfWeek !== 0 && dayOfWeek !== 6) { // Skip weekends\n      days.push(new Date(date));\n    }\n    date.setDate(date.getDate() + 1);\n  }\n  return days;\n};\n\nconst workingDays = getWorkingDays(10);\n\n// Convert calendar events to busy periods\nconst busyPeriods = calendarEvents.map(event => ({\n  start: new Date(event.start.dateTime || event.start.date),\n  end: new Date(event.end.dateTime || event.end.date)\n}));\n\n// Find available slots\nconst availableSlots = [];\n\nfor (const day of workingDays) {\n  // Check if day matches preferred dates\n  const dayStr = day.toISOString().split('T')[0];\n  const matchesPreferred = request.preferredDates.length === 0 || \n    request.preferredDates.some(pd => pd.includes(dayStr));\n  \n  if (!matchesPreferred && request.preferredDates.length > 0) continue;\n  \n  // Generate time slots for this day\n  const slots = [];\n  \n  // Morning slots (9-12)\n  if (request.preferredTimes.includes('morning') || request.preferredTimes.length === 0) {\n    for (let hour = workingHours.start; hour < workingHours.lunchStart; hour++) {\n      for (let minute of [0, 30]) {\n        const slotStart = new Date(day);\n        slotStart.setHours(hour, minute, 0, 0);\n        const slotEnd = new Date(slotStart.getTime() + surveyDuration * 60000);\n        \n        if (slotEnd.getHours() < workingHours.lunchStart || \n           (slotEnd.getHours() === workingHours.lunchStart && slotEnd.getMinutes() === 0)) {\n          slots.push({ start: slotStart, end: slotEnd, period: 'morning' });\n        }\n      }\n    }\n  }\n  \n  // Afternoon slots (13-17)\n  if (request.preferredTimes.includes('afternoon') || request.preferredTimes.length === 0) {\n    for (let hour = workingHours.lunchEnd; hour < workingHours.end; hour++) {\n      for (let minute of [0, 30]) {\n        const slotStart = new Date(day);\n        slotStart.setHours(hour, minute, 0, 0);\n        const slotEnd = new Date(slotStart.getTime() + surveyDuration * 60000);\n        \n        if (slotEnd.getHours() <= workingHours.end) {\n          slots.push({ start: slotStart, end: slotEnd, period: 'afternoon' });\n        }\n      }\n    }\n  }\n  \n  // Filter out slots that conflict with busy periods\n  for (const slot of slots) {\n    const slotWithBuffer = {\n      start: new Date(slot.start.getTime() - bufferTime * 60000),\n      end: new Date(slot.end.getTime() + bufferTime * 60000)\n    };\n    \n    const hasConflict = busyPeriods.some(busy => \n      (slotWithBuffer.start < busy.end && slotWithBuffer.end > busy.start)\n    );\n    \n    if (!hasConflict) {\n      availableSlots.push({\n        date: slot.start.toISOString().split('T')[0],\n        dayOfWeek: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][slot.start.getDay()],\n        startTime: slot.start.toTimeString().slice(0, 5),\n        endTime: slot.end.toTimeString().slice(0, 5),\n        period: slot.period,\n        isoStart: slot.start.toISOString(),\n        isoEnd: slot.end.toISOString(),\n        displayText: `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][slot.start.getDay()]} ${slot.start.getDate()}/${slot.start.getMonth() + 1} at ${slot.start.toTimeString().slice(0, 5)}`\n      });\n    }\n  }\n}\n\n// Limit to top 10 slots\nconst topSlots = availableSlots.slice(0, 10);\n\nreturn {\n  json: {\n    request: request,\n    availableSlots: topSlots,\n    totalSlotsFound: availableSlots.length,\n    searchedDays: workingDays.length\n  }\n};"
+      },
+      "id": "find-available-slots",
+      "name": "Find Available Slots",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.availableSlots.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-slots-available",
+      "name": "Slots Available?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1100, 200]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.request.contactEmail }}",
+        "subject": "Choose Your Site Survey Time - Hampstead Renovations",
+        "emailType": "html",
+        "message": "=<html>\n<head>\n<style>\nbody { font-family: Georgia, serif; line-height: 1.8; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }\n.header { background: #1a365d; color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }\n.header h1 { margin: 0; font-size: 24px; }\n.content { padding: 30px; background: #f8f9fa; }\n.slots-grid { display: grid; gap: 10px; margin: 20px 0; }\n.slot { background: white; padding: 15px; border-radius: 8px; border: 2px solid #e2e8f0; text-align: center; cursor: pointer; }\n.slot:hover { border-color: #1a365d; }\n.slot-day { font-weight: bold; color: #1a365d; }\n.slot-time { font-size: 18px; margin: 5px 0; }\n.slot-period { font-size: 12px; color: #666; }\n.btn { display: inline-block; background: #1a365d; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; margin: 5px; }\n.info-box { background: #e3f2fd; padding: 15px; border-radius: 4px; margin: 20px 0; }\n.footer { text-align: center; padding: 20px; font-size: 12px; color: #666; }\n</style>\n</head>\n<body>\n<div class=\"header\">\n<h1>📅 Schedule Your Site Survey</h1>\n<p>Let's find the perfect time to visit your property</p>\n</div>\n\n<div class=\"content\">\n<p>Dear {{ $json.request.contactName }},</p>\n\n<p>Thank you for your interest in Hampstead Renovations! We're excited to learn more about your {{ $json.request.projectTypes.join(' and ') || 'renovation' }} project.</p>\n\n<p>Please select a convenient time for our surveyor to visit your property at <strong>{{ $json.request.propertyAddress || $json.request.postcode }}</strong>:</p>\n\n<div class=\"slots-grid\">\n{{ $json.availableSlots.slice(0, 6).map(slot => \n  '<a href=\"' + $env.N8N_WEBHOOK_URL + '/webhook/confirm-survey?slot=' + encodeURIComponent(slot.isoStart) + '&lead=' + $json.request.leadId + '\" class=\"slot\">' +\n  '<div class=\"slot-day\">' + slot.dayOfWeek + ', ' + slot.date.split('-').reverse().join('/') + '</div>' +\n  '<div class=\"slot-time\">' + slot.startTime + ' - ' + slot.endTime + '</div>' +\n  '<div class=\"slot-period\">' + slot.period.charAt(0).toUpperCase() + slot.period.slice(1) + '</div>' +\n  '</a>'\n).join('') }}\n</div>\n\n<div class=\"info-box\">\n<strong>What to expect:</strong>\n<ul>\n<li>Our surveyor will spend approximately 60 minutes at your property</li>\n<li>We'll discuss your vision and requirements in detail</li>\n<li>We'll take measurements and photos (with your permission)</li>\n<li>You'll receive a detailed quote within 5 working days</li>\n</ul>\n</div>\n\n<p>If none of these times work for you, please reply to this email or call us on <strong>020 7946 0958</strong>.</p>\n\n<p>We look forward to meeting you!</p>\n\n<p>Warm regards,<br>\nThe Hampstead Renovations Team</p>\n</div>\n\n<div class=\"footer\">\n<p>Hampstead Renovations Ltd | 020 7946 0958 | info@hampsteadrenovations.co.uk</p>\n<p>Premium Residential Renovations in North West London</p>\n</div>\n</body>\n</html>",
+        "options": {
+          "replyTo": "surveys@hampsteadrenovations.co.uk"
+        }
+      },
+      "id": "send-booking-email",
+      "name": "Send Booking Options Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1300, 100],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credentials",
+          "name": "SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "phoneNumberId": "={{ $env.WHATSAPP_PHONE_ID }}",
+        "recipientPhoneNumber": "={{ $json.request.contactPhone }}",
+        "textBody": "Hi {{ $json.request.contactName.split(' ')[0] }}! 👋\n\nThanks for your interest in Hampstead Renovations.\n\nWe've just sent you an email with available times for a site survey at your property.\n\nOur next available slots are:\n{{ $json.availableSlots.slice(0, 3).map(s => '📅 ' + s.displayText).join('\\n') }}\n\nReply with a number (1-3) to book, or check your email for more options.\n\nQuestions? Just reply here or call 020 7946 0958.\n\n- The HR Team",
+        "options": {}
+      },
+      "id": "send-whatsapp-options",
+      "name": "Send WhatsApp Options",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1300, 250],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "whatsapp-credentials",
+          "name": "WhatsApp API Key"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "list",
+          "value": "survey_bookings"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{ $json.request.leadId }}",
+            "deal_id": "={{ $json.request.dealId }}",
+            "contact_name": "={{ $json.request.contactName }}",
+            "contact_email": "={{ $json.request.contactEmail }}",
+            "contact_phone": "={{ $json.request.contactPhone }}",
+            "property_address": "={{ $json.request.propertyAddress }}",
+            "postcode": "={{ $json.request.postcode }}",
+            "project_types": "={{ JSON.stringify($json.request.projectTypes) }}",
+            "available_slots": "={{ JSON.stringify($json.availableSlots) }}",
+            "status": "options_sent",
+            "created_at": "={{ $json.request.requestedAt }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "save-booking-request",
+      "name": "Save Booking Request",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1500, 150],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Survey scheduling options sent\",\n  \"data\": {\n    \"lead_id\": \"{{ $json.request.leadId }}\",\n    \"slots_offered\": {{ $json.availableSlots.length }},\n    \"next_available\": \"{{ $json.availableSlots[0]?.displayText || 'N/A' }}\",\n    \"email_sent\": true,\n    \"whatsapp_sent\": {{ $json.request.contactPhone ? 'true' : 'false' }}\n  }\n}",
+        "options": {}
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1700, 150]
+    },
+    {
+      "parameters": {
+        "channel": "#operations",
+        "text": "=⚠️ *No Survey Slots Available*\n\n*Client:* {{ $json.request.contactName }}\n*Property:* {{ $json.request.propertyAddress || $json.request.postcode }}\n*Project:* {{ $json.request.projectTypes.join(', ') || 'Renovation' }}\n*Urgency:* {{ $json.request.urgency }}\n\nCalendar is fully booked for the next 10 working days.\nManual scheduling required.\n\n*Contact:*\n📧 {{ $json.request.contactEmail }}\n📞 {{ $json.request.contactPhone || 'Not provided' }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "alert-no-slots",
+      "name": "Alert - No Slots Available",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [1300, 350],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "slack-credentials",
+          "name": "Slack OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"message\": \"Validation failed\",\n  \"errors\": {{ JSON.stringify($json.errors) }}\n}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "error-response",
+      "name": "Validation Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [700, 400]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "confirm-survey",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-confirm",
+      "name": "Confirm Survey Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 600],
+      "webhookId": "confirm-survey"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Parse confirmation from email click\nconst query = $input.item.json.query;\n\nconst slotIso = query.slot;\nconst leadId = query.lead;\n\nif (!slotIso || !leadId) {\n  return {\n    json: {\n      success: false,\n      error: 'Missing required parameters'\n    }\n  };\n}\n\nconst slotDate = new Date(slotIso);\n\nreturn {\n  json: {\n    success: true,\n    leadId: leadId,\n    confirmedSlot: {\n      isoStart: slotIso,\n      date: slotDate.toISOString().split('T')[0],\n      time: slotDate.toTimeString().slice(0, 5),\n      displayDate: slotDate.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),\n      displayTime: slotDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })\n    }\n  }\n};"
+      },
+      "id": "parse-confirmation",
+      "name": "Parse Confirmation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 600]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM survey_bookings WHERE lead_id = '{{ $json.leadId }}' ORDER BY created_at DESC LIMIT 1;",
+        "options": {}
+      },
+      "id": "fetch-booking-details",
+      "name": "Fetch Booking Details",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [500, 600],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+        "authentication": "oAuth2",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"summary\": \"Site Survey: {{ $('Fetch Booking Details').item.json.contact_name }} - {{ $('Fetch Booking Details').item.json.postcode }}\",\n  \"description\": \"Property: {{ $('Fetch Booking Details').item.json.property_address }}\\nPostcode: {{ $('Fetch Booking Details').item.json.postcode }}\\nContact: {{ $('Fetch Booking Details').item.json.contact_name }}\\nPhone: {{ $('Fetch Booking Details').item.json.contact_phone }}\\nEmail: {{ $('Fetch Booking Details').item.json.contact_email }}\\nProject: {{ $('Fetch Booking Details').item.json.project_types }}\\n\\nLead ID: {{ $('Fetch Booking Details').item.json.lead_id }}\",\n  \"location\": \"{{ $('Fetch Booking Details').item.json.property_address }}, {{ $('Fetch Booking Details').item.json.postcode }}\",\n  \"start\": {\n    \"dateTime\": \"{{ $json.confirmedSlot.isoStart }}\",\n    \"timeZone\": \"Europe/London\"\n  },\n  \"end\": {\n    \"dateTime\": \"{{ new Date(new Date($json.confirmedSlot.isoStart).getTime() + 60*60*1000).toISOString() }}\",\n    \"timeZone\": \"Europe/London\"\n  },\n  \"reminders\": {\n    \"useDefault\": false,\n    \"overrides\": [\n      {\"method\": \"email\", \"minutes\": 1440},\n      {\"method\": \"popup\", \"minutes\": 60}\n    ]\n  }\n}",
+        "options": {}
+      },
+      "id": "create-calendar-event",
+      "name": "Create Calendar Event",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 600],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "google-calendar-credentials",
+          "name": "Google Calendar OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "list",
+          "value": "survey_bookings"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "confirmed",
+            "confirmed_slot": "={{ $('Parse Confirmation').item.json.confirmedSlot.isoStart }}",
+            "calendar_event_id": "={{ $json.id }}",
+            "confirmed_at": "={{ new Date().toISOString() }}"
+          }
+        },
+        "whereConditions": {
+          "values": [
+            {
+              "column": "lead_id",
+              "value": "={{ $('Parse Confirmation').item.json.leadId }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "update-booking-confirmed",
+      "name": "Update Booking as Confirmed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [900, 600],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Fetch Booking Details').item.json.contact_email }}",
+        "subject": "✅ Site Survey Confirmed - {{ $('Parse Confirmation').item.json.confirmedSlot.displayDate }}",
+        "emailType": "html",
+        "message": "=<html>\n<head>\n<style>\nbody { font-family: Georgia, serif; line-height: 1.8; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }\n.header { background: #28a745; color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }\n.header h1 { margin: 0; }\n.content { padding: 30px; background: #f8f9fa; }\n.confirmation-box { background: white; padding: 20px; border-radius: 8px; border-left: 4px solid #28a745; margin: 20px 0; }\n.detail { margin: 10px 0; }\n.label { color: #666; font-size: 12px; text-transform: uppercase; }\n.value { font-size: 18px; font-weight: bold; }\n.checklist { background: #fff3cd; padding: 15px; border-radius: 4px; margin: 20px 0; }\n.footer { text-align: center; padding: 20px; font-size: 12px; color: #666; }\n</style>\n</head>\n<body>\n<div class=\"header\">\n<h1>✅ Survey Confirmed!</h1>\n<p>We're looking forward to meeting you</p>\n</div>\n\n<div class=\"content\">\n<p>Dear {{ $('Fetch Booking Details').item.json.contact_name }},</p>\n\n<p>Great news! Your site survey has been confirmed.</p>\n\n<div class=\"confirmation-box\">\n<div class=\"detail\">\n<div class=\"label\">Date</div>\n<div class=\"value\">{{ $('Parse Confirmation').item.json.confirmedSlot.displayDate }}</div>\n</div>\n<div class=\"detail\">\n<div class=\"label\">Time</div>\n<div class=\"value\">{{ $('Parse Confirmation').item.json.confirmedSlot.displayTime }}</div>\n</div>\n<div class=\"detail\">\n<div class=\"label\">Location</div>\n<div class=\"value\">{{ $('Fetch Booking Details').item.json.property_address }}, {{ $('Fetch Booking Details').item.json.postcode }}</div>\n</div>\n<div class=\"detail\">\n<div class=\"label\">Duration</div>\n<div class=\"value\">Approximately 1 hour</div>\n</div>\n</div>\n\n<div class=\"checklist\">\n<strong>📋 Before the Survey:</strong>\n<ul>\n<li>Please ensure someone over 18 is present at the property</li>\n<li>Think about any specific requirements or ideas you'd like to discuss</li>\n<li>Collect any inspiration images or references (optional)</li>\n<li>Consider your budget range for the project</li>\n</ul>\n</div>\n\n<p>Our surveyor will arrive at the scheduled time. If you need to reschedule, please let us know at least 24 hours in advance.</p>\n\n<p>If you have any questions before the survey, don't hesitate to get in touch.</p>\n\n<p>We're excited to help bring your vision to life!</p>\n\n<p>Warm regards,<br>\nThe Hampstead Renovations Team</p>\n</div>\n\n<div class=\"footer\">\n<p>📞 020 7946 0958 | 📧 surveys@hampsteadrenovations.co.uk</p>\n<p>Hampstead Renovations Ltd</p>\n</div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "send-confirmation-email",
+      "name": "Send Confirmation Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1100, 600],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credentials",
+          "name": "SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=<!DOCTYPE html>\n<html>\n<head>\n<title>Survey Confirmed - Hampstead Renovations</title>\n<style>\nbody { font-family: Georgia, serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #f8f9fa; margin: 0; }\n.card { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; max-width: 500px; }\n.success-icon { font-size: 64px; margin-bottom: 20px; }\nh1 { color: #28a745; margin: 0; }\n.details { background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: left; }\n</style>\n</head>\n<body>\n<div class=\"card\">\n<div class=\"success-icon\">✅</div>\n<h1>Survey Confirmed!</h1>\n<p>Your site survey has been scheduled.</p>\n<div class=\"details\">\n<p><strong>Date:</strong> {{ $('Parse Confirmation').item.json.confirmedSlot.displayDate }}</p>\n<p><strong>Time:</strong> {{ $('Parse Confirmation').item.json.confirmedSlot.displayTime }}</p>\n</div>\n<p>A confirmation email has been sent to you.</p>\n<p>We look forward to meeting you!</p>\n</div>\n</body>\n</html>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html"
+              }
+            ]
+          }
+        }
+      },
+      "id": "confirmation-page",
+      "name": "Show Confirmation Page",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1300, 600]
+    }
+  ],
+  "connections": {
+    "Schedule Survey Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Survey Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Survey Request": {
+      "main": [
+        [
+          {
+            "node": "Valid Request?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Request?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Surveyor Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validation Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Surveyor Calendar": {
+      "main": [
+        [
+          {
+            "node": "Find Available Slots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Available Slots": {
+      "main": [
+        [
+          {
+            "node": "Slots Available?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slots Available?": {
+      "main": [
+        [
+          {
+            "node": "Send Booking Options Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send WhatsApp Options",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Alert - No Slots Available",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Booking Options Email": {
+      "main": [
+        [
+          {
+            "node": "Save Booking Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Booking Request": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm Survey Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Fetch Booking Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Booking Details": {
+      "main": [
+        [
+          {
+            "node": "Create Calendar Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Calendar Event": {
+      "main": [
+        [
+          {
+            "node": "Update Booking as Confirmed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Booking as Confirmed": {
+      "main": [
+        [
+          {
+            "node": "Send Confirmation Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Confirmation Email": {
+      "main": [
+        [
+          {
+            "node": "Show Confirmation Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "error-handler"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [
+    {
+      "name": "agent-2",
+      "color": "#4CAF50"
+    },
+    {
+      "name": "sales-crm",
+      "color": "#2196F3"
+    },
+    {
+      "name": "scheduling",
+      "color": "#FF9800"
+    }
+  ]
+}

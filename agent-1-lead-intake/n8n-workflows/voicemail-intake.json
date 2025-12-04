@@ -1,0 +1,678 @@
+{
+  "name": "Voicemail Intake Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "twilio-voicemail",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "webhook-voicemail",
+      "name": "Twilio Voicemail Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 300],
+      "webhookId": "voicemail-intake"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Parse Twilio webhook payload\nconst body = $input.item.json.body || $input.item.json;\n\nconst voicemailData = {\n  callSid: body.CallSid,\n  from: body.From,\n  to: body.To,\n  recordingUrl: body.RecordingUrl,\n  recordingSid: body.RecordingSid,\n  recordingDuration: parseInt(body.RecordingDuration) || 0,\n  callStatus: body.CallStatus,\n  callerCity: body.CallerCity || '',\n  callerState: body.CallerState || '',\n  callerCountry: body.CallerCountry || 'GB',\n  timestamp: new Date().toISOString(),\n  \n  // Normalize phone number to E.164\n  normalizedPhone: body.From.startsWith('+') ? body.From : `+${body.From}`,\n  \n  // Check if from UK\n  isUKNumber: body.From.startsWith('+44') || body.From.startsWith('44') || body.From.startsWith('0'),\n  \n  // Initial priority based on call metadata\n  initialPriority: body.RecordingDuration > 60 ? 'HIGH' : 'MEDIUM'\n};\n\nreturn { json: voicemailData };"
+      },
+      "id": "parse-twilio",
+      "name": "Parse Twilio Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.recordingUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            },
+            {
+              "leftValue": "={{ $json.recordingDuration }}",
+              "rightValue": 3,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "validate-recording",
+      "name": "Validate Recording Exists",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.recordingUrl }}.mp3",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "twilioApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download-recording",
+      "name": "Download Recording",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 200],
+      "credentials": {
+        "twilioApi": {
+          "id": "twilio-credentials",
+          "name": "Twilio API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.deepgram.com/v1/listen",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": true
+            }
+          }
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "nova-2"
+            },
+            {
+              "name": "language",
+              "value": "en-GB"
+            },
+            {
+              "name": "punctuate",
+              "value": "true"
+            },
+            {
+              "name": "diarize",
+              "value": "true"
+            },
+            {
+              "name": "smart_format",
+              "value": "true"
+            },
+            {
+              "name": "detect_language",
+              "value": "true"
+            },
+            {
+              "name": "sentiment",
+              "value": "true"
+            },
+            {
+              "name": "topics",
+              "value": "true"
+            },
+            {
+              "name": "intents",
+              "value": "true"
+            },
+            {
+              "name": "summarize",
+              "value": "v2"
+            }
+          ]
+        }
+      },
+      "id": "transcribe-deepgram",
+      "name": "Transcribe with Deepgram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "deepgram-credentials",
+          "name": "Deepgram API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Parse Deepgram response and extract all insights\nconst deepgramResponse = $input.item.json;\nconst voicemailData = $('Parse Twilio Payload').item.json;\n\nconst results = deepgramResponse.results;\nconst channels = results.channels[0];\nconst alternative = channels.alternatives[0];\n\n// Extract transcription\nconst transcription = {\n  text: alternative.transcript,\n  confidence: alternative.confidence,\n  words: alternative.words || [],\n  paragraphs: alternative.paragraphs?.paragraphs || [],\n  \n  // Sentiment analysis\n  sentiment: results.sentiments?.segments?.map(s => ({\n    text: s.text,\n    sentiment: s.sentiment,\n    confidence: s.sentiment_score\n  })) || [],\n  overallSentiment: results.sentiments?.average?.sentiment || 'neutral',\n  \n  // Topics detected\n  topics: results.topics?.segments?.flatMap(s => s.topics?.map(t => t.topic)) || [],\n  \n  // Intents detected  \n  intents: results.intents?.segments?.flatMap(s => s.intents?.map(i => i.intent)) || [],\n  \n  // Summary\n  summary: results.summary?.short || '',\n  \n  // Language detection\n  detectedLanguage: results.detected_language || 'en',\n  \n  // Audio metadata\n  duration: results.metadata?.duration || voicemailData.recordingDuration,\n  channels: results.metadata?.channels || 1\n};\n\n// Merge with original voicemail data\nreturn {\n  json: {\n    ...voicemailData,\n    transcription,\n    processingTimestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "parse-transcription",
+      "name": "Parse Transcription Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 200]
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-20250514",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 2048
+        },
+        "messages": {
+          "values": [
+            {
+              "type": "system",
+              "content": "You are an expert voicemail analyzer for Hampstead Renovations, a premium residential renovation company serving North West London (NW3, NW6, NW11 postcodes).\n\nYour task is to analyze voicemail transcriptions and extract:\n1. Caller's name (if mentioned)\n2. Contact details mentioned\n3. Property type and location hints\n4. Specific renovation needs/scope\n5. Urgency indicators\n6. Budget hints\n7. Timeline requirements\n8. Competitor mentions\n9. How they heard about us\n10. Sentiment and emotional state\n11. Key action items/requests\n\nRESPOND ONLY WITH VALID JSON matching this exact schema:\n{\n  \"caller_name\": \"string or null\",\n  \"contact_info\": {\n    \"phone_mentioned\": \"string or null\",\n    \"email_mentioned\": \"string or null\",\n    \"address_hints\": [\"array of location mentions\"]\n  },\n  \"property_details\": {\n    \"type\": \"house|flat|apartment|period_property|new_build|unknown\",\n    \"area_hints\": [\"postcodes or area names mentioned\"],\n    \"size_hints\": \"any size indicators\"\n  },\n  \"renovation_scope\": {\n    \"project_types\": [\"kitchen|bathroom|extension|loft|basement|refurbishment|structural|electrical|plumbing|decoration\"],\n    \"specific_requests\": [\"detailed requirements mentioned\"],\n    \"complexity\": \"simple|moderate|complex|major\"\n  },\n  \"timing\": {\n    \"urgency\": \"urgent|soon|flexible|planning_ahead\",\n    \"timeline_mentioned\": \"any dates or timeframes\",\n    \"constraints\": [\"specific timing constraints\"]\n  },\n  \"budget\": {\n    \"range_mentioned\": \"any budget figures\",\n    \"indicators\": \"premium|mid_range|budget_conscious|not_mentioned\"\n  },\n  \"lead_quality\": {\n    \"score\": 1-100,\n    \"reasoning\": \"brief explanation\",\n    \"qualification\": \"hot|warm|cold|unqualified\",\n    \"in_target_area\": true|false|unknown,\n    \"project_fit\": \"ideal|good|marginal|poor\"\n  },\n  \"sentiment_analysis\": {\n    \"overall_mood\": \"positive|neutral|frustrated|anxious|excited\",\n    \"pain_points\": [\"specific frustrations mentioned\"],\n    \"expectations\": [\"what they expect from us\"]\n  },\n  \"action_items\": {\n    \"callback_required\": true|false,\n    \"preferred_contact_time\": \"if mentioned\",\n    \"specific_questions\": [\"questions to prepare for\"],\n    \"documents_requested\": [\"any docs they want\"]\n  },\n  \"referral_source\": \"how they found us if mentioned\",\n  \"competitor_mentions\": [\"any other companies mentioned\"],\n  \"red_flags\": [\"any concerning elements\"],\n  \"recommended_response_template\": \"initial_quote|consultation_booking|more_info_needed|decline_politely\",\n  \"summary\": \"2-3 sentence summary for the sales team\"\n}"
+            },
+            {
+              "type": "user",
+              "content": "Analyze this voicemail transcription:\n\n---\nTRANSCRIPT:\n{{ $json.transcription.text }}\n\n---\nAUDIO METADATA:\n- Duration: {{ $json.transcription.duration }} seconds\n- Detected Language: {{ $json.transcription.detectedLanguage }}\n- Overall Sentiment: {{ $json.transcription.overallSentiment }}\n- Topics Detected: {{ $json.transcription.topics.join(', ') }}\n- Intents Detected: {{ $json.transcription.intents.join(', ') }}\n- AI Summary: {{ $json.transcription.summary }}\n\n---\nCALLER INFO:\n- Phone: {{ $json.normalizedPhone }}\n- Location: {{ $json.callerCity }}, {{ $json.callerCountry }}\n- Call Duration: {{ $json.recordingDuration }} seconds\n\nProvide your analysis as valid JSON only."
+            }
+          ]
+        }
+      },
+      "id": "analyze-voicemail-claude",
+      "name": "Analyze with Claude",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.2,
+      "position": [1300, 200],
+      "credentials": {
+        "anthropicApi": {
+          "id": "anthropic-credentials",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Parse Claude's JSON response and merge with all data\nconst voicemailData = $('Parse Transcription Results').item.json;\nlet claudeResponse;\n\ntry {\n  // Extract JSON from Claude's response\n  const responseText = $input.item.json.message?.content || $input.item.json.text || '';\n  const jsonMatch = responseText.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    claudeResponse = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No JSON found in response');\n  }\n} catch (error) {\n  // Fallback if parsing fails\n  claudeResponse = {\n    caller_name: null,\n    lead_quality: { score: 50, qualification: 'warm', reasoning: 'Manual review needed' },\n    action_items: { callback_required: true },\n    summary: 'Voicemail received - requires manual review',\n    parse_error: error.message\n  };\n}\n\n// Calculate final lead score with weighted factors\nconst calculateFinalScore = () => {\n  let score = claudeResponse.lead_quality?.score || 50;\n  \n  // Adjust for recording duration (longer = more interested)\n  if (voicemailData.recordingDuration > 60) score += 10;\n  else if (voicemailData.recordingDuration > 30) score += 5;\n  \n  // Adjust for sentiment\n  if (voicemailData.transcription.overallSentiment === 'positive') score += 5;\n  else if (voicemailData.transcription.overallSentiment === 'negative') score -= 10;\n  \n  // Adjust for UK location\n  if (voicemailData.isUKNumber) score += 5;\n  \n  // Cap at 100\n  return Math.min(100, Math.max(0, score));\n};\n\n// Determine priority for callback queue\nconst determinePriority = (score, urgency) => {\n  if (score >= 80 || urgency === 'urgent') return 'CRITICAL';\n  if (score >= 60 || urgency === 'soon') return 'HIGH';\n  if (score >= 40) return 'MEDIUM';\n  return 'LOW';\n};\n\nconst finalScore = calculateFinalScore();\nconst priority = determinePriority(\n  finalScore, \n  claudeResponse.timing?.urgency\n);\n\n// Build comprehensive lead record\nconst leadRecord = {\n  // Source identifiers\n  source: 'voicemail',\n  sourcePlatform: 'twilio',\n  callSid: voicemailData.callSid,\n  recordingSid: voicemailData.recordingSid,\n  \n  // Contact info\n  phone: voicemailData.normalizedPhone,\n  callerName: claudeResponse.caller_name,\n  email: claudeResponse.contact_info?.email_mentioned,\n  \n  // Location\n  callerCity: voicemailData.callerCity,\n  callerCountry: voicemailData.callerCountry,\n  addressHints: claudeResponse.contact_info?.address_hints || [],\n  inTargetArea: claudeResponse.lead_quality?.in_target_area,\n  \n  // Transcription data\n  transcription: voicemailData.transcription.text,\n  transcriptionConfidence: voicemailData.transcription.confidence,\n  recordingUrl: voicemailData.recordingUrl,\n  recordingDuration: voicemailData.recordingDuration,\n  \n  // Analysis results\n  analysis: claudeResponse,\n  \n  // Lead scoring\n  leadScore: finalScore,\n  qualification: claudeResponse.lead_quality?.qualification || 'warm',\n  priority: priority,\n  projectFit: claudeResponse.lead_quality?.project_fit || 'unknown',\n  \n  // Project details\n  propertyType: claudeResponse.property_details?.type,\n  projectTypes: claudeResponse.renovation_scope?.project_types || [],\n  projectComplexity: claudeResponse.renovation_scope?.complexity,\n  \n  // Timeline & Budget\n  urgency: claudeResponse.timing?.urgency,\n  timelineMentioned: claudeResponse.timing?.timeline_mentioned,\n  budgetIndicator: claudeResponse.budget?.indicators,\n  \n  // Sentiment\n  sentiment: voicemailData.transcription.overallSentiment,\n  callerMood: claudeResponse.sentiment_analysis?.overall_mood,\n  \n  // Action items\n  callbackRequired: claudeResponse.action_items?.callback_required ?? true,\n  preferredContactTime: claudeResponse.action_items?.preferred_contact_time,\n  questionsToAddress: claudeResponse.action_items?.specific_questions || [],\n  recommendedTemplate: claudeResponse.recommended_response_template,\n  \n  // Meta\n  summary: claudeResponse.summary,\n  referralSource: claudeResponse.referral_source,\n  competitorMentions: claudeResponse.competitor_mentions || [],\n  redFlags: claudeResponse.red_flags || [],\n  \n  // Timestamps\n  receivedAt: voicemailData.timestamp,\n  processedAt: new Date().toISOString(),\n  \n  // Workflow tracking\n  workflowStatus: 'processed',\n  hubspotSynced: false,\n  callbackScheduled: false\n};\n\nreturn { json: leadRecord };"
+      },
+      "id": "build-lead-record",
+      "name": "Build Lead Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 200]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "list",
+          "value": "leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "source": "={{ $json.source }}",
+            "source_id": "={{ $json.callSid }}",
+            "phone": "={{ $json.phone }}",
+            "name": "={{ $json.callerName }}",
+            "email": "={{ $json.email }}",
+            "property_type": "={{ $json.propertyType }}",
+            "project_types": "={{ JSON.stringify($json.projectTypes) }}",
+            "location_hints": "={{ JSON.stringify($json.addressHints) }}",
+            "lead_score": "={{ $json.leadScore }}",
+            "qualification": "={{ $json.qualification }}",
+            "priority": "={{ $json.priority }}",
+            "urgency": "={{ $json.urgency }}",
+            "raw_data": "={{ JSON.stringify($json) }}",
+            "ai_analysis": "={{ JSON.stringify($json.analysis) }}",
+            "summary": "={{ $json.summary }}"
+          }
+        },
+        "options": {
+          "onConflict": "nothing"
+        }
+      },
+      "id": "save-to-postgres",
+      "name": "Save to PostgreSQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1700, 200],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"phone\": \"{{ $json.phone }}\",\n    \"firstname\": \"{{ $json.callerName ? $json.callerName.split(' ')[0] : 'Voicemail' }}\",\n    \"lastname\": \"{{ $json.callerName ? $json.callerName.split(' ').slice(1).join(' ') : 'Lead' }}\",\n    \"email\": \"{{ $json.email || '' }}\",\n    \"city\": \"{{ $json.callerCity || '' }}\",\n    \"hs_lead_status\": \"NEW\",\n    \"lead_source\": \"Voicemail\",\n    \"lead_score\": \"{{ $json.leadScore }}\",\n    \"lead_qualification\": \"{{ $json.qualification }}\",\n    \"property_type\": \"{{ $json.propertyType || '' }}\",\n    \"project_types\": \"{{ $json.projectTypes.join(', ') }}\",\n    \"project_complexity\": \"{{ $json.projectComplexity || '' }}\",\n    \"urgency_level\": \"{{ $json.urgency || '' }}\",\n    \"budget_indicator\": \"{{ $json.budgetIndicator || '' }}\",\n    \"caller_sentiment\": \"{{ $json.callerMood || '' }}\",\n    \"voicemail_summary\": \"{{ $json.summary }}\",\n    \"recording_url\": \"{{ $json.recordingUrl }}\",\n    \"transcription\": \"{{ $json.transcription.substring(0, 65535) }}\",\n    \"referral_source\": \"{{ $json.referralSource || '' }}\",\n    \"callback_required\": \"{{ $json.callbackRequired }}\",\n    \"preferred_contact_time\": \"{{ $json.preferredContactTime || '' }}\",\n    \"competitor_mentions\": \"{{ $json.competitorMentions.join(', ') }}\",\n    \"red_flags\": \"{{ $json.redFlags.join(', ') }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "create-hubspot-contact",
+      "name": "Create HubSpot Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1900, 100],
+      "credentials": {
+        "hubspotOAuth2Api": {
+          "id": "hubspot-credentials",
+          "name": "HubSpot OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/deals",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"dealname\": \"{{ $json.callerName || 'Voicemail Lead' }} - {{ $json.projectTypes[0] || 'Renovation' }}\",\n    \"pipeline\": \"default\",\n    \"dealstage\": \"qualifiedtobuy\",\n    \"amount\": \"\",\n    \"closedate\": \"\",\n    \"lead_source\": \"Voicemail\",\n    \"lead_score\": \"{{ $json.leadScore }}\",\n    \"project_types\": \"{{ $json.projectTypes.join(', ') }}\",\n    \"project_complexity\": \"{{ $json.projectComplexity || '' }}\",\n    \"property_type\": \"{{ $json.propertyType || '' }}\",\n    \"urgency\": \"{{ $json.urgency || '' }}\",\n    \"voicemail_summary\": \"{{ $json.summary }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "create-hubspot-deal",
+      "name": "Create HubSpot Deal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2100, 100],
+      "credentials": {
+        "hubspotOAuth2Api": {
+          "id": "hubspot-credentials",
+          "name": "HubSpot OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Build Lead Record').item.json.priority }}",
+              "rightValue": "CRITICAL",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "id": "check-critical-priority",
+      "name": "Is Critical Priority?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1900, 300]
+    },
+    {
+      "parameters": {
+        "phoneNumber": "={{ $env.TEAM_PHONE_NUMBER }}",
+        "message": "🔴 URGENT VOICEMAIL\n\nFrom: {{ $('Build Lead Record').item.json.phone }}\nName: {{ $('Build Lead Record').item.json.callerName || 'Unknown' }}\nScore: {{ $('Build Lead Record').item.json.leadScore }}/100\nPriority: {{ $('Build Lead Record').item.json.priority }}\n\n📝 Summary:\n{{ $('Build Lead Record').item.json.summary }}\n\n🏠 Project: {{ $('Build Lead Record').item.json.projectTypes.join(', ') }}\n⏰ Urgency: {{ $('Build Lead Record').item.json.urgency }}\n\n🎧 Listen: {{ $('Build Lead Record').item.json.recordingUrl }}\n\nCallback ASAP!",
+        "options": {}
+      },
+      "id": "send-urgent-sms",
+      "name": "Send Urgent SMS Alert",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [2100, 250],
+      "credentials": {
+        "twilioApi": {
+          "id": "twilio-credentials",
+          "name": "Twilio API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.TEAM_EMAIL }}",
+        "subject": "🔴 Urgent Voicemail - {{ $('Build Lead Record').item.json.callerName || $('Build Lead Record').item.json.phone }}",
+        "emailType": "html",
+        "message": "=<html>\n<head>\n<style>\nbody { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }\n.header { background: #dc3545; color: white; padding: 20px; text-align: center; }\n.content { padding: 20px; }\n.score-box { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0; }\n.score { font-size: 48px; font-weight: bold; color: {{ $('Build Lead Record').item.json.leadScore >= 70 ? '#28a745' : ($('Build Lead Record').item.json.leadScore >= 40 ? '#ffc107' : '#dc3545') }}; }\n.details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }\n.detail-item { background: #f8f9fa; padding: 10px; border-radius: 4px; }\n.label { font-weight: bold; color: #666; font-size: 12px; text-transform: uppercase; }\n.value { font-size: 16px; margin-top: 5px; }\n.transcription { background: #fff3cd; padding: 15px; border-left: 4px solid #ffc107; margin: 15px 0; }\n.cta { background: #007bff; color: white; padding: 15px 30px; text-decoration: none; border-radius: 4px; display: inline-block; margin: 10px 5px; }\n.cta:hover { background: #0056b3; }\n</style>\n</head>\n<body>\n<div class=\"header\">\n<h1>🚨 Urgent Voicemail Alert</h1>\n<p>Immediate callback required</p>\n</div>\n\n<div class=\"content\">\n<div class=\"score-box\">\n<div class=\"score\">{{ $('Build Lead Record').item.json.leadScore }}/100</div>\n<p>Lead Score - {{ $('Build Lead Record').item.json.qualification }} ({{ $('Build Lead Record').item.json.priority }} Priority)</p>\n</div>\n\n<h2>📞 Caller Information</h2>\n<div class=\"details-grid\">\n<div class=\"detail-item\">\n<div class=\"label\">Phone</div>\n<div class=\"value\">{{ $('Build Lead Record').item.json.phone }}</div>\n</div>\n<div class=\"detail-item\">\n<div class=\"label\">Name</div>\n<div class=\"value\">{{ $('Build Lead Record').item.json.callerName || 'Not mentioned' }}</div>\n</div>\n<div class=\"detail-item\">\n<div class=\"label\">Location</div>\n<div class=\"value\">{{ $('Build Lead Record').item.json.callerCity || 'Unknown' }}</div>\n</div>\n<div class=\"detail-item\">\n<div class=\"label\">Sentiment</div>\n<div class=\"value\">{{ $('Build Lead Record').item.json.callerMood || 'Neutral' }}</div>\n</div>\n</div>\n\n<h2>🏠 Project Details</h2>\n<div class=\"details-grid\">\n<div class=\"detail-item\">\n<div class=\"label\">Property Type</div>\n<div class=\"value\">{{ $('Build Lead Record').item.json.propertyType || 'Not specified' }}</div>\n</div>\n<div class=\"detail-item\">\n<div class=\"label\">Project Types</div>\n<div class=\"value\">{{ $('Build Lead Record').item.json.projectTypes.join(', ') || 'Not specified' }}</div>\n</div>\n<div class=\"detail-item\">\n<div class=\"label\">Complexity</div>\n<div class=\"value\">{{ $('Build Lead Record').item.json.projectComplexity || 'Unknown' }}</div>\n</div>\n<div class=\"detail-item\">\n<div class=\"label\">Urgency</div>\n<div class=\"value\">{{ $('Build Lead Record').item.json.urgency || 'Not specified' }}</div>\n</div>\n</div>\n\n<h2>📝 Summary</h2>\n<p>{{ $('Build Lead Record').item.json.summary }}</p>\n\n<div class=\"transcription\">\n<h3>🎤 Full Transcription</h3>\n<p>{{ $('Build Lead Record').item.json.transcription }}</p>\n</div>\n\n<h2>📋 Callback Notes</h2>\n<ul>\n{{ $('Build Lead Record').item.json.questionsToAddress.map(q => '<li>' + q + '</li>').join('') || '<li>Standard callback - no specific questions noted</li>' }}\n</ul>\n\n{{ $('Build Lead Record').item.json.redFlags.length > 0 ? '<h2>⚠️ Red Flags</h2><ul>' + $('Build Lead Record').item.json.redFlags.map(f => '<li>' + f + '</li>').join('') + '</ul>' : '' }}\n\n<p style=\"text-align: center; margin-top: 30px;\">\n<a href=\"tel:{{ $('Build Lead Record').item.json.phone }}\" class=\"cta\">📞 Call Now</a>\n<a href=\"{{ $('Build Lead Record').item.json.recordingUrl }}\" class=\"cta\" style=\"background: #28a745;\">🎧 Listen to Recording</a>\n</p>\n</div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "send-urgent-email",
+      "name": "Send Urgent Email Alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2100, 400],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credentials",
+          "name": "SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "list",
+          "value": "callback_queue"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{ $('Save to PostgreSQL').item.json.id }}",
+            "phone": "={{ $json.phone }}",
+            "priority": "={{ $json.priority }}",
+            "preferred_time": "={{ $json.preferredContactTime }}",
+            "notes": "={{ $json.summary }}",
+            "questions": "={{ JSON.stringify($json.questionsToAddress) }}",
+            "recording_url": "={{ $json.recordingUrl }}",
+            "scheduled_for": "={{ new Date().toISOString() }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "add-to-callback-queue",
+      "name": "Add to Callback Queue",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1900, 500],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"success\",\n  \"message\": \"Voicemail processed successfully\",\n  \"data\": {\n    \"callSid\": \"{{ $('Parse Twilio Payload').item.json.callSid }}\",\n    \"leadScore\": {{ $('Build Lead Record').item.json.leadScore }},\n    \"priority\": \"{{ $('Build Lead Record').item.json.priority }}\",\n    \"qualification\": \"{{ $('Build Lead Record').item.json.qualification }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "webhook-response-success",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2300, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Log failed recording validation\nconst data = $input.item.json;\n\nconsole.log('Invalid recording:', {\n  callSid: data.callSid,\n  recordingUrl: data.recordingUrl,\n  duration: data.recordingDuration\n});\n\nreturn {\n  json: {\n    status: 'skipped',\n    reason: 'No valid recording found or duration too short',\n    callSid: data.callSid\n  }\n};"
+      },
+      "id": "log-invalid-recording",
+      "name": "Log Invalid Recording",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"skipped\",\n  \"message\": \"No valid recording to process\",\n  \"data\": {\n    \"callSid\": \"{{ $json.callSid }}\",\n    \"reason\": \"{{ $json.reason }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "webhook-response-skipped",
+      "name": "Skipped Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.JAEGER_COLLECTOR_URL }}/api/traces",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"operationName\": \"voicemail-intake\",\n  \"serviceName\": \"agent-1-lead-intake\",\n  \"tags\": {\n    \"call.sid\": \"{{ $('Parse Twilio Payload').item.json.callSid }}\",\n    \"lead.score\": {{ $('Build Lead Record').item.json.leadScore || 0 }},\n    \"lead.priority\": \"{{ $('Build Lead Record').item.json.priority || 'UNKNOWN' }}\",\n    \"source\": \"voicemail\"\n  },\n  \"duration\": {{ Date.now() - new Date($('Parse Twilio Payload').item.json.timestamp).getTime() }}\n}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "send-trace",
+      "name": "Send Trace to Jaeger",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2300, 500],
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Twilio Voicemail Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Twilio Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Twilio Payload": {
+      "main": [
+        [
+          {
+            "node": "Validate Recording Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Recording Exists": {
+      "main": [
+        [
+          {
+            "node": "Download Recording",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Invalid Recording",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Recording": {
+      "main": [
+        [
+          {
+            "node": "Transcribe with Deepgram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe with Deepgram": {
+      "main": [
+        [
+          {
+            "node": "Parse Transcription Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Transcription Results": {
+      "main": [
+        [
+          {
+            "node": "Analyze with Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze with Claude": {
+      "main": [
+        [
+          {
+            "node": "Build Lead Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Lead Record": {
+      "main": [
+        [
+          {
+            "node": "Save to PostgreSQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to PostgreSQL": {
+      "main": [
+        [
+          {
+            "node": "Create HubSpot Contact",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Is Critical Priority?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Add to Callback Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create HubSpot Contact": {
+      "main": [
+        [
+          {
+            "node": "Create HubSpot Deal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create HubSpot Deal": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Critical Priority?": {
+      "main": [
+        [
+          {
+            "node": "Send Urgent SMS Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Urgent Email Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Invalid Recording": {
+      "main": [
+        [
+          {
+            "node": "Skipped Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to Callback Queue": {
+      "main": [
+        [
+          {
+            "node": "Send Trace to Jaeger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "error-handler"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [
+    {
+      "name": "agent-1",
+      "color": "#1E88E5"
+    },
+    {
+      "name": "lead-intake",
+      "color": "#43A047"
+    },
+    {
+      "name": "voicemail",
+      "color": "#8E24AA"
+    }
+  ]
+}

@@ -1,0 +1,575 @@
+{
+  "name": "Follow-up Message Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "generate-followup",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Generate Follow-up Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 300],
+      "webhookId": "generate-followup"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "schedule-daily",
+      "name": "Daily 9AM Check (Mon-Fri)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [100, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  d.id,\n  d.deal_id,\n  d.deal_name,\n  d.stage,\n  d.amount,\n  d.analysis,\n  d.last_checked_at,\n  c.name as contact_name,\n  c.email as contact_email,\n  c.phone as contact_phone,\n  c.preferred_contact_method,\n  (\n    SELECT MAX(sent_at) \n    FROM follow_up_messages fm \n    WHERE fm.deal_id = d.deal_id\n  ) as last_followup_at\nFROM deal_monitoring d\nLEFT JOIN contacts c ON c.hubspot_id = d.contact_id\nWHERE \n  d.is_overdue = true\n  OR d.urgency_score > 60\n  OR (\n    d.last_checked_at < NOW() - INTERVAL '48 hours'\n    AND d.stage NOT IN ('closedwon', 'closedlost')\n  )\nORDER BY d.urgency_score DESC, d.amount DESC\nLIMIT 20;",
+        "options": {}
+      },
+      "id": "fetch-deals-needing-followup",
+      "name": "Fetch Deals Needing Follow-up",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [300, 500],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.contact_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "properties",
+              "value": "firstname,lastname,email,phone,city,lead_source,project_types,property_type,notes_last_updated,hs_lead_status"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-contact-details",
+      "name": "Fetch Contact from HubSpot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 300],
+      "credentials": {
+        "hubspotOAuth2Api": {
+          "id": "hubspot-credentials",
+          "name": "HubSpot OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.hubapi.com/crm/v3/objects/deals/{{ $json.deal_id }}/associations/notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotOAuth2Api",
+        "options": {}
+      },
+      "id": "fetch-deal-notes",
+      "name": "Fetch Deal Notes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 450],
+      "credentials": {
+        "hubspotOAuth2Api": {
+          "id": "hubspot-credentials",
+          "name": "HubSpot OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Merge all context for follow-up generation\nconst input = $input.item.json;\nconst contact = $('Fetch Contact from HubSpot').item.json;\nconst notes = $('Fetch Deal Notes').item.json;\n\n// Calculate time since last contact\nconst lastFollowup = input.last_followup_at ? new Date(input.last_followup_at) : null;\nconst daysSinceLastFollowup = lastFollowup \n  ? Math.floor((Date.now() - lastFollowup.getTime()) / (1000 * 60 * 60 * 24))\n  : null;\n\n// Determine follow-up stage\nlet followupStage = 'initial';\nif (input.stage === 'qualifiedtobuy') followupStage = 'post_contact';\nelse if (input.stage === 'presentationscheduled') followupStage = 'survey_reminder';\nelse if (input.stage === 'decisionmakerboughtin') followupStage = 'post_survey';\nelse if (input.stage === 'contractsent') followupStage = 'quote_followup';\n\n// Determine preferred channel\nlet preferredChannel = contact.properties?.preferred_contact_method || 'email';\nif (preferredChannel === 'phone') preferredChannel = 'email'; // We don't auto-call\n\nconst context = {\n  deal: {\n    id: input.deal_id,\n    name: input.deal_name,\n    stage: input.stage,\n    amount: input.amount,\n    analysis: typeof input.analysis === 'string' ? JSON.parse(input.analysis) : input.analysis\n  },\n  contact: {\n    firstName: contact.properties?.firstname || 'there',\n    lastName: contact.properties?.lastname || '',\n    fullName: `${contact.properties?.firstname || ''} ${contact.properties?.lastname || ''}`.trim() || 'Valued Client',\n    email: contact.properties?.email || input.contact_email,\n    phone: contact.properties?.phone || input.contact_phone,\n    city: contact.properties?.city || '',\n    projectTypes: contact.properties?.project_types || '',\n    propertyType: contact.properties?.property_type || '',\n    leadSource: contact.properties?.lead_source || ''\n  },\n  timing: {\n    daysSinceLastFollowup: daysSinceLastFollowup,\n    lastFollowupDate: lastFollowup?.toISOString(),\n    followupNumber: daysSinceLastFollowup ? Math.ceil(daysSinceLastFollowup / 3) : 1\n  },\n  followupStage: followupStage,\n  preferredChannel: preferredChannel,\n  recentNotes: (notes.results || []).slice(0, 3).map(n => n.properties?.hs_note_body || ''),\n  processedAt: new Date().toISOString()\n};\n\nreturn { json: context };"
+      },
+      "id": "prepare-context",
+      "name": "Prepare Follow-up Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "filePath": "/data/prompts/follow-up-generator.txt",
+        "options": {}
+      },
+      "id": "read-prompt",
+      "name": "Read Follow-up Prompt",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-20250514",
+        "options": {
+          "temperature": 0.6,
+          "maxTokens": 2048
+        },
+        "messages": {
+          "values": [
+            {
+              "type": "system",
+              "content": "={{ $('Read Follow-up Prompt').item.json.content }}"
+            },
+            {
+              "type": "user",
+              "content": "Generate a personalized follow-up message for this client:\n\n---\nCLIENT INFORMATION:\n- Name: {{ $json.contact.fullName }}\n- First Name: {{ $json.contact.firstName }}\n- Email: {{ $json.contact.email }}\n- Phone: {{ $json.contact.phone }}\n- Location: {{ $json.contact.city || 'Not specified' }}\n- Lead Source: {{ $json.contact.leadSource || 'Unknown' }}\n\n---\nPROJECT DETAILS:\n- Project Types: {{ $json.contact.projectTypes || 'Not specified' }}\n- Property Type: {{ $json.contact.propertyType || 'Not specified' }}\n\n---\nDEAL STATUS:\n- Deal Name: {{ $json.deal.name }}\n- Current Stage: {{ $json.deal.stage }}\n- Deal Value: £{{ $json.deal.amount?.toLocaleString() || 'TBD' }}\n- Follow-up Stage: {{ $json.followupStage }}\n\n---\nTIMING:\n- Days Since Last Follow-up: {{ $json.timing.daysSinceLastFollowup ?? 'First follow-up' }}\n- Follow-up Number: {{ $json.timing.followupNumber }}\n- Preferred Channel: {{ $json.preferredChannel }}\n\n---\nAI ANALYSIS (from deal monitoring):\n{{ JSON.stringify($json.deal.analysis?.recommendations || {}, null, 2) }}\n\n---\nRECENT NOTES:\n{{ $json.recentNotes.join('\\n---\\n') || 'No recent notes' }}\n\n---\n\nGenerate an appropriate follow-up message. Respond with valid JSON only."
+            }
+          ]
+        }
+      },
+      "id": "generate-with-claude",
+      "name": "Generate with Claude",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.2,
+      "position": [1100, 300],
+      "credentials": {
+        "anthropicApi": {
+          "id": "anthropic-credentials",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Parse Claude's generated message\nconst context = $('Prepare Follow-up Context').item.json;\nlet generatedMessage;\n\ntry {\n  const responseText = $input.item.json.message?.content || $input.item.json.text || '';\n  const jsonMatch = responseText.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    generatedMessage = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No JSON found in response');\n  }\n} catch (error) {\n  // Fallback message\n  generatedMessage = {\n    message: {\n      channel: 'email',\n      subject: `Following up on your ${context.contact.projectTypes || 'renovation'} project`,\n      greeting: `Hi ${context.contact.firstName},`,\n      body: `I wanted to follow up on our conversation about your renovation project. I'm here to help answer any questions you might have.\\n\\nWould you have time for a quick call this week?`,\n      call_to_action: 'Reply to this email or call us at 020 7946 0958',\n      sign_off: 'Best regards,\\nThe Hampstead Renovations Team',\n      ps_line: null\n    },\n    metadata: {\n      tone: 'professional',\n      word_count: 50,\n      personalization_score: 3,\n      urgency_level: 'medium',\n      purpose: 'general_followup'\n    },\n    scheduling: {\n      best_send_time: '10:00',\n      follow_up_if_no_response: 3,\n      alternative_channel: 'phone'\n    }\n  };\n}\n\nreturn {\n  json: {\n    ...context,\n    generatedMessage: generatedMessage,\n    status: 'generated'\n  }\n};"
+      },
+      "id": "parse-generated-message",
+      "name": "Parse Generated Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "list",
+          "value": "follow_up_messages"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "deal_id": "={{ $json.deal.id }}",
+            "contact_email": "={{ $json.contact.email }}",
+            "channel": "={{ $json.generatedMessage.message.channel }}",
+            "subject": "={{ $json.generatedMessage.message.subject }}",
+            "body": "={{ $json.generatedMessage.message.body }}",
+            "full_message": "={{ JSON.stringify($json.generatedMessage) }}",
+            "status": "pending_approval",
+            "created_at": "={{ $json.processedAt }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "save-message",
+      "name": "Save Message to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1500, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.generatedMessage.metadata.urgency_level }}",
+              "rightValue": "high",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "leftValue": "={{ $env.AUTO_SEND_FOLLOWUPS }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-auto-send",
+      "name": "Auto-Send Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1700, 300]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.contact.email }}",
+        "subject": "={{ $json.generatedMessage.message.subject }}",
+        "emailType": "html",
+        "message": "=<html>\n<head>\n<style>\nbody { font-family: Georgia, serif; line-height: 1.8; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }\n.header { border-bottom: 2px solid #1a365d; padding-bottom: 15px; margin-bottom: 20px; }\n.logo { font-size: 24px; font-weight: bold; color: #1a365d; }\n.tagline { font-size: 12px; color: #666; font-style: italic; }\n.body { margin: 20px 0; }\n.cta { background: #1a365d; color: white; padding: 12px 24px; text-decoration: none; display: inline-block; margin: 15px 0; border-radius: 4px; }\n.signature { margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; }\n.ps { font-style: italic; color: #666; margin-top: 20px; padding: 15px; background: #f8f9fa; border-left: 3px solid #1a365d; }\n.footer { font-size: 11px; color: #999; margin-top: 30px; text-align: center; }\n</style>\n</head>\n<body>\n<div class=\"header\">\n<div class=\"logo\">Hampstead Renovations</div>\n<div class=\"tagline\">Premium Residential Renovations in North West London</div>\n</div>\n\n<div class=\"body\">\n<p>{{ $json.generatedMessage.message.greeting }}</p>\n\n{{ $json.generatedMessage.message.body.split('\\n\\n').map(p => '<p>' + p + '</p>').join('') }}\n\n<p><strong>{{ $json.generatedMessage.message.call_to_action }}</strong></p>\n</div>\n\n<div class=\"signature\">\n<p>{{ $json.generatedMessage.message.sign_off }}</p>\n</div>\n\n{{ $json.generatedMessage.message.ps_line ? '<div class=\"ps\">P.S. ' + $json.generatedMessage.message.ps_line + '</div>' : '' }}\n\n<div class=\"footer\">\n<p>Hampstead Renovations Ltd | 020 7946 0958 | info@hampsteadrenovations.co.uk</p>\n<p>Specialists in Kitchen, Bathroom, Extension and Full Refurbishment Projects</p>\n<p><a href=\"https://hampsteadrenovations.co.uk\">www.hampsteadrenovations.co.uk</a></p>\n</div>\n</body>\n</html>",
+        "options": {
+          "replyTo": "info@hampsteadrenovations.co.uk"
+        }
+      },
+      "id": "send-email",
+      "name": "Send Follow-up Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1900, 200],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credentials",
+          "name": "SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "list",
+          "value": "follow_up_messages"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "sent",
+            "sent_at": "={{ new Date().toISOString() }}"
+          }
+        },
+        "whereConditions": {
+          "values": [
+            {
+              "column": "deal_id",
+              "value": "={{ $json.deal.id }}"
+            },
+            {
+              "column": "status",
+              "value": "pending_approval"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "update-status-sent",
+      "name": "Update Status to Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2100, 200],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Hampstead PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "channel": "#sales-followups",
+        "text": "=📧 *Follow-up Message Generated*\n\n*Deal:* {{ $json.deal.name }}\n*Contact:* {{ $json.contact.fullName }}\n*Channel:* {{ $json.generatedMessage.message.channel }}\n*Urgency:* {{ $json.generatedMessage.metadata.urgency_level }}\n\n*Subject:* {{ $json.generatedMessage.message.subject }}\n\n*Preview:*\n> {{ $json.generatedMessage.message.body.substring(0, 200) }}...\n\n*Status:* {{ $env.AUTO_SEND_FOLLOWUPS === 'true' ? '✅ Auto-sent' : '⏳ Pending approval' }}\n\n<https://app.hubspot.com/contacts/deals/{{ $json.deal.id }}|View Deal>",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "notify-slack-generated",
+      "name": "Notify Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [1900, 400],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "slack-credentials",
+          "name": "Slack OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Follow-up generated\",\n  \"data\": {\n    \"deal_id\": \"{{ $json.deal.id }}\",\n    \"channel\": \"{{ $json.generatedMessage.message.channel }}\",\n    \"subject\": \"{{ $json.generatedMessage.message.subject }}\",\n    \"status\": \"{{ $env.AUTO_SEND_FOLLOWUPS === 'true' ? 'sent' : 'pending_approval' }}\",\n    \"urgency\": \"{{ $json.generatedMessage.metadata.urgency_level }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "webhook-response",
+      "name": "Return Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2100, 400]
+    },
+    {
+      "parameters": {
+        "batchSize": 5,
+        "options": {}
+      },
+      "id": "batch-deals",
+      "name": "Process in Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [500, 600]
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "seconds"
+      },
+      "id": "rate-limit",
+      "name": "Rate Limit",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2100, 600]
+    }
+  ],
+  "connections": {
+    "Generate Follow-up Webhook": {
+      "main": [
+        [
+          {
+            "node": "Fetch Contact from HubSpot",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Deal Notes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily 9AM Check (Mon-Fri)": {
+      "main": [
+        [
+          {
+            "node": "Fetch Deals Needing Follow-up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Deals Needing Follow-up": {
+      "main": [
+        [
+          {
+            "node": "Process in Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Contact from HubSpot": {
+      "main": [
+        [
+          {
+            "node": "Prepare Follow-up Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Follow-up Context": {
+      "main": [
+        [
+          {
+            "node": "Read Follow-up Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Follow-up Prompt": {
+      "main": [
+        [
+          {
+            "node": "Generate with Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate with Claude": {
+      "main": [
+        [
+          {
+            "node": "Parse Generated Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Generated Message": {
+      "main": [
+        [
+          {
+            "node": "Save Message to DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Message to DB": {
+      "main": [
+        [
+          {
+            "node": "Auto-Send Enabled?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto-Send Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Send Follow-up Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Follow-up Email": {
+      "main": [
+        [
+          {
+            "node": "Update Status to Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status to Sent": {
+      "main": [
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process in Batches": {
+      "main": [
+        [
+          {
+            "node": "Fetch Contact from HubSpot",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Deal Notes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rate Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Limit": {
+      "main": [
+        [
+          {
+            "node": "Process in Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "error-handler"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [
+    {
+      "name": "agent-2",
+      "color": "#4CAF50"
+    },
+    {
+      "name": "sales-crm",
+      "color": "#2196F3"
+    },
+    {
+      "name": "automation",
+      "color": "#9C27B0"
+    }
+  ]
+}

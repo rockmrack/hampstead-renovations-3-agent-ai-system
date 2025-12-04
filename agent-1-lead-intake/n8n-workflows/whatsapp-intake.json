@@ -1,0 +1,1074 @@
+{
+  "name": "WhatsApp Lead Intake",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp-webhook",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "WhatsApp Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "whatsapp-intake"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "verify-token",
+              "leftValue": "={{ $json.query['hub.mode'] }}",
+              "rightValue": "subscribe",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-verification",
+      "name": "Is Verification?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.query['hub.challenge'] }}",
+        "options": {}
+      },
+      "id": "respond-verification",
+      "name": "Respond to Verification",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [680, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\n\n// Parse incoming webhook\nif (!body || !body.entry || !body.entry[0]) {\n  return [{ json: { skip: true, reason: 'Invalid webhook payload' } }];\n}\n\nconst entry = body.entry[0];\nconst changes = entry.changes?.[0];\n\nif (!changes || changes.field !== 'messages') {\n  return [{ json: { skip: true, reason: 'Not a message event' } }];\n}\n\nconst value = changes.value;\nconst messages = value.messages;\nconst contacts = value.contacts;\n\nif (!messages || messages.length === 0) {\n  // This might be a status update\n  return [{ json: { skip: true, reason: 'No messages in payload' } }];\n}\n\nconst message = messages[0];\nconst contact = contacts?.[0];\n\n// Build standardised output\nconst output = {\n  skip: false,\n  messageId: message.id,\n  from: message.from,\n  timestamp: message.timestamp,\n  timestampDate: new Date(parseInt(message.timestamp) * 1000).toISOString(),\n  type: message.type,\n  \n  // Contact info\n  contactName: contact?.profile?.name || 'Unknown',\n  whatsappId: contact?.wa_id || message.from,\n  \n  // Message content (varies by type)\n  text: null,\n  audioId: null,\n  imageId: null,\n  documentId: null,\n  locationData: null,\n  buttonResponse: null,\n  listResponse: null,\n  \n  // Metadata\n  receivedAt: new Date().toISOString(),\n  businessPhoneNumberId: value.metadata?.phone_number_id\n};\n\n// Extract content based on message type\nswitch (message.type) {\n  case 'text':\n    output.text = message.text?.body || '';\n    break;\n    \n  case 'audio':\n    output.audioId = message.audio?.id;\n    output.audioMimeType = message.audio?.mime_type;\n    break;\n    \n  case 'image':\n    output.imageId = message.image?.id;\n    output.imageCaption = message.image?.caption;\n    break;\n    \n  case 'document':\n    output.documentId = message.document?.id;\n    output.documentFilename = message.document?.filename;\n    break;\n    \n  case 'location':\n    output.locationData = {\n      latitude: message.location?.latitude,\n      longitude: message.location?.longitude,\n      name: message.location?.name,\n      address: message.location?.address\n    };\n    break;\n    \n  case 'button':\n    output.buttonResponse = message.button?.text;\n    output.buttonPayload = message.button?.payload;\n    break;\n    \n  case 'interactive':\n    if (message.interactive?.type === 'button_reply') {\n      output.buttonResponse = message.interactive.button_reply?.title;\n      output.buttonPayload = message.interactive.button_reply?.id;\n    } else if (message.interactive?.type === 'list_reply') {\n      output.listResponse = message.interactive.list_reply?.title;\n      output.listPayload = message.interactive.list_reply?.id;\n    }\n    break;\n    \n  default:\n    output.text = '[Unsupported message type: ' + message.type + ']';\n}\n\n// Format phone number\nif (output.from && !output.from.startsWith('+')) {\n  output.formattedPhone = '+' + output.from;\n} else {\n  output.formattedPhone = output.from;\n}\n\nreturn [{ json: output }];"
+      },
+      "id": "parse-message",
+      "name": "Parse WhatsApp Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"status\": \"received\" }",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-200",
+      "name": "Respond 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 420]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-skip",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "should-skip",
+      "name": "Should Skip?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 420]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-audio",
+              "leftValue": "={{ $json.type }}",
+              "rightValue": "audio",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-audio",
+      "name": "Is Audio Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 500]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://waba.360dialog.io/v1/media/{{ $json.audioId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download-audio",
+      "name": "Download Audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 380],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "whatsapp-api",
+          "name": "WhatsApp API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.deepgram.com/v1/listen",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": true
+            }
+          }
+        },
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "nova-2"
+            },
+            {
+              "name": "language",
+              "value": "en-GB"
+            },
+            {
+              "name": "punctuate",
+              "value": "true"
+            },
+            {
+              "name": "smart_format",
+              "value": "true"
+            }
+          ]
+        }
+      },
+      "id": "transcribe-audio",
+      "name": "Transcribe with Deepgram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 380],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "deepgram-api",
+          "name": "Deepgram API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst messageData = $('Parse WhatsApp Message').first().json;\n\nlet text;\n\nif (input.results?.channels?.[0]?.alternatives?.[0]?.transcript) {\n  text = input.results.channels[0].alternatives[0].transcript;\n} else {\n  text = '[Audio transcription failed]';\n}\n\nreturn [{ \n  json: { \n    ...messageData,\n    text: text,\n    transcribed: true,\n    transcriptionConfidence: input.results?.channels?.[0]?.alternatives?.[0]?.confidence || 0\n  } \n}];"
+      },
+      "id": "extract-transcript",
+      "name": "Extract Transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 380]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {
+          "values": [
+            {
+              "field1": "messageId",
+              "field2": "messageId"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "merge-text",
+      "name": "Merge Text",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [2220, 500]
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "objectType": "contacts",
+        "filterGroups": {
+          "groups": [
+            {
+              "filters": [
+                {
+                  "propertyName": "phone",
+                  "operator": "CONTAINS_TOKEN",
+                  "value": "={{ $json.from }}"
+                }
+              ]
+            }
+          ]
+        },
+        "additionalOptions": {
+          "properties": [
+            "firstname",
+            "lastname",
+            "email",
+            "phone",
+            "lead_score",
+            "lead_source",
+            "postcode",
+            "service_interest",
+            "hs_lead_status"
+          ]
+        }
+      },
+      "id": "check-hubspot-contact",
+      "name": "Check Existing HubSpot Contact",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2,
+      "position": [2440, 500],
+      "credentials": {
+        "hubspotApi": {
+          "id": "hubspot",
+          "name": "HubSpot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const messageData = $('Merge Text').first().json;\nconst hubspotResults = $input.first().json;\n\nconst existingContact = hubspotResults.results?.[0] || null;\n\nreturn [{\n  json: {\n    ...messageData,\n    existingContact: existingContact,\n    isReturningCustomer: !!existingContact,\n    hubspotContactId: existingContact?.id || null\n  }\n}];"
+      },
+      "id": "enrich-with-hubspot",
+      "name": "Enrich with HubSpot Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2660, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-5-20250514\",\n  \"max_tokens\": 2048,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($('Load Qualifier Prompt').first().json.prompt + \"\\n\\nCUSTOMER MESSAGE:\\n\" + $json.text + (($json.existingContact) ? \"\\n\\nEXISTING CUSTOMER DATA:\\n\" + JSON.stringify($json.existingContact.properties) : \"\")) }}\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "qualify-with-claude",
+      "name": "Qualify Lead with Claude",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3100, 500],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "anthropic",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst messageData = $('Enrich with HubSpot Data').first().json;\n\nlet qualification;\n\ntry {\n  const content = response.content[0].text;\n  // Handle potential markdown code blocks\n  let jsonStr = content;\n  if (content.includes('```json')) {\n    jsonStr = content.split('```json')[1].split('```')[0].trim();\n  } else if (content.includes('```')) {\n    jsonStr = content.split('```')[1].split('```')[0].trim();\n  }\n  qualification = JSON.parse(jsonStr);\n} catch (e) {\n  qualification = {\n    parseError: true,\n    rawResponse: response.content[0].text,\n    error: e.message\n  };\n}\n\nreturn [{\n  json: {\n    ...messageData,\n    qualification: qualification,\n    aiParseSuccess: !qualification.parseError\n  }\n}];"
+      },
+      "id": "parse-ai-response",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3320, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Enhanced lead scoring with business rules\nconst input = $input.first().json;\nconst qualification = input.qualification;\n\nif (qualification.parseError) {\n  // Fallback scoring if AI parsing failed\n  return [{\n    json: {\n      ...input,\n      finalScore: 50,\n      finalPriority: 'warm',\n      scoringMethod: 'fallback'\n    }\n  }];\n}\n\nconst extracted = qualification.extracted_data || {};\nconst aiQualification = qualification.qualification || {};\n\n// Start with AI score\nlet score = aiQualification.score || 50;\n\n// Premium postcodes bonus\nconst premiumPostcodes = ['NW3', 'NW11', 'N6'];\nconst servicePostcodes = ['NW3', 'NW6', 'NW11', 'NW2', 'NW8', 'N6', 'N2', 'N10'];\n\nconst location = extracted.location || {};\nconst postcode = location.postcode_area?.toUpperCase();\n\nif (postcode) {\n  if (premiumPostcodes.includes(postcode)) {\n    score += 10; // Premium area bonus\n  } else if (!servicePostcodes.some(p => postcode.startsWith(p))) {\n    score -= 20; // Outside area penalty\n  }\n}\n\n// Conservation area bonus (our specialty)\nif (extracted.planning_context?.conservation_area === 'yes' ||\n    extracted.planning_context?.conservation_area === 'likely') {\n  score += 8;\n}\n\n// Budget adjustments\nconst budgetScores = {\n  'under-15k': -10,\n  '15k-40k': 0,\n  '40k-100k': 15,\n  '100k-250k': 25,\n  'over-250k': 30,\n  'unknown': 5\n};\nconst budgetBand = extracted.budget?.band || 'unknown';\nscore += budgetScores[budgetBand] || 0;\n\n// Timeline adjustments\nconst timelineScores = {\n  'urgent': 20,\n  'soon': 15,\n  'planning': 8,\n  'future': 0,\n  'exploring': -10,\n  'unknown': 0\n};\nconst timeline = extracted.timeline?.category || 'unknown';\nscore += timelineScores[timeline] || 0;\n\n// Service type adjustments\nconst serviceScores = {\n  'kitchen-extension': 15,\n  'loft-conversion': 15,\n  'full-renovation': 20,\n  'basement': 25,\n  'bathroom': 5,\n  'maintenance': -5,\n  'other': 0\n};\nconst serviceType = extracted.service_type?.primary || 'other';\nscore += serviceScores[serviceType] || 0;\n\n// Returning customer bonus\nif (input.isReturningCustomer) {\n  score += 15;\n}\n\n// Cap score between 0-100\nscore = Math.max(0, Math.min(100, Math.round(score)));\n\n// Determine priority\nlet priority;\nif (score >= 85) priority = 'hot';\nelse if (score >= 65) priority = 'warm';\nelse if (score >= 40) priority = 'cool';\nelse priority = 'cold';\n\n// Determine response urgency\nlet responseUrgency;\nif (priority === 'hot') responseUrgency = 'immediate';\nelse if (priority === 'warm') responseUrgency = 'same-day';\nelse if (priority === 'cool') responseUrgency = 'next-day';\nelse responseUrgency = 'within-week';\n\nreturn [{\n  json: {\n    ...input,\n    finalScore: score,\n    finalPriority: priority,\n    responseUrgency: responseUrgency,\n    scoringMethod: 'enhanced',\n    scoringDetails: {\n      aiBaseScore: aiQualification.score || 50,\n      locationAdjustment: postcode ? (premiumPostcodes.includes(postcode) ? '+10' : (!servicePostcodes.some(p => postcode.startsWith(p)) ? '-20' : '0')) : '0',\n      budgetAdjustment: budgetScores[budgetBand] || 0,\n      timelineAdjustment: timelineScores[timeline] || 0,\n      serviceAdjustment: serviceScores[serviceType] || 0,\n      returningCustomerBonus: input.isReturningCustomer ? '+15' : '0'\n    }\n  }\n}];"
+      },
+      "id": "calculate-final-score",
+      "name": "Calculate Final Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3540, 500]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "objectType": "contacts",
+        "idProperty": "phone",
+        "options": {
+          "resolveData": true
+        },
+        "properties": [
+          {
+            "key": "phone",
+            "value": "={{ $json.formattedPhone }}"
+          },
+          {
+            "key": "firstname",
+            "value": "={{ $json.qualification.extracted_data?.name?.first || '' }}"
+          },
+          {
+            "key": "lastname",
+            "value": "={{ $json.qualification.extracted_data?.name?.last || '' }}"
+          },
+          {
+            "key": "hs_lead_status",
+            "value": "NEW"
+          }
+        ],
+        "customProperties": [
+          {
+            "key": "postcode",
+            "value": "={{ $json.qualification.extracted_data?.location?.postcode_full || $json.qualification.extracted_data?.location?.postcode_area || '' }}"
+          },
+          {
+            "key": "service_interest",
+            "value": "={{ $json.qualification.extracted_data?.service_type?.primary || '' }}"
+          },
+          {
+            "key": "property_type",
+            "value": "={{ $json.qualification.extracted_data?.property?.type || '' }}"
+          },
+          {
+            "key": "budget_band",
+            "value": "={{ $json.qualification.extracted_data?.budget?.band || '' }}"
+          },
+          {
+            "key": "timeline",
+            "value": "={{ $json.qualification.extracted_data?.timeline?.category || '' }}"
+          },
+          {
+            "key": "conservation_area",
+            "value": "={{ $json.qualification.extracted_data?.planning_context?.conservation_area || '' }}"
+          },
+          {
+            "key": "lead_score",
+            "value": "={{ $json.finalScore }}"
+          },
+          {
+            "key": "lead_source",
+            "value": "whatsapp"
+          }
+        ]
+      },
+      "id": "upsert-hubspot-contact",
+      "name": "Create/Update HubSpot Contact",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2,
+      "position": [3760, 500],
+      "credentials": {
+        "hubspotApi": {
+          "id": "hubspot",
+          "name": "HubSpot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "objectType": "deals",
+        "properties": [
+          {
+            "key": "dealname",
+            "value": "={{ ($json.qualification.extracted_data?.service_type?.primary || 'Project').replace(/-/g, ' ').replace(/\\b\\w/g, c => c.toUpperCase()) }} - {{ $json.qualification.extracted_data?.location?.postcode_area || $json.qualification.extracted_data?.location?.area_name || 'Location TBC' }}"
+          },
+          {
+            "key": "pipeline",
+            "value": "default"
+          },
+          {
+            "key": "dealstage",
+            "value": "appointmentscheduled"
+          },
+          {
+            "key": "amount",
+            "value": "={{ {'under-15k': 10000, '15k-40k': 27500, '40k-100k': 70000, '100k-250k': 175000, 'over-250k': 350000, 'unknown': 50000}[$json.qualification.extracted_data?.budget?.band] || 50000 }}"
+          }
+        ],
+        "customProperties": [
+          {
+            "key": "service_type",
+            "value": "={{ $json.qualification.extracted_data?.service_type?.primary || '' }}"
+          },
+          {
+            "key": "priority",
+            "value": "={{ $json.finalPriority }}"
+          }
+        ],
+        "options": {}
+      },
+      "id": "create-hubspot-deal",
+      "name": "Create HubSpot Deal",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2,
+      "position": [3980, 500],
+      "credentials": {
+        "hubspotApi": {
+          "id": "hubspot",
+          "name": "HubSpot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "customApiCall",
+        "path": "=/crm/v3/associations/deals/contacts/batch/create",
+        "method": "POST",
+        "body": "={\n  \"inputs\": [\n    {\n      \"from\": { \"id\": \"{{ $('Create HubSpot Deal').first().json.id }}\" },\n      \"to\": { \"id\": \"{{ $('Create/Update HubSpot Contact').first().json.id }}\" },\n      \"type\": \"deal_to_contact\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "associate-contact-deal",
+      "name": "Associate Contact to Deal",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2,
+      "position": [4200, 500],
+      "credentials": {
+        "hubspotApi": {
+          "id": "hubspot",
+          "name": "HubSpot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-5-20250514\",\n  \"max_tokens\": 512,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($('Load Responder Prompt').first().json.prompt + \"\\n\\n\" + \n        \"CONTEXT PROVIDED:\\n\" +\n        \"- customer_message: \" + $('Calculate Final Score').first().json.text + \"\\n\" +\n        \"- contact_name: \" + ($('Calculate Final Score').first().json.qualification.extracted_data?.name?.first || $('Calculate Final Score').first().json.contactName || 'there') + \"\\n\" +\n        \"- extracted_data: \" + JSON.stringify($('Calculate Final Score').first().json.qualification.extracted_data) + \"\\n\" +\n        \"- qualification: \" + JSON.stringify($('Calculate Final Score').first().json.qualification.qualification) + \"\\n\" +\n        \"- response_type: \" + ($('Calculate Final Score').first().json.qualification.recommended_action?.type || 'book-survey') + \"\\n\" +\n        \"- time_of_day: \" + new Date().toLocaleString('en-GB', {timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit'})\n      ) }}\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "generate-response",
+      "name": "Generate WhatsApp Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4420, 500],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "anthropic",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst messageData = $('Calculate Final Score').first().json;\n\nlet responseText = response.content[0].text;\n\n// Clean up any accidental JSON or code formatting\nif (responseText.startsWith('{') || responseText.startsWith('```')) {\n  try {\n    const parsed = JSON.parse(responseText.replace(/```json?\\n?/g, '').replace(/```/g, ''));\n    responseText = parsed.body || parsed.message || parsed.text || responseText;\n  } catch (e) {\n    // Not JSON, keep original\n    responseText = responseText.replace(/```[a-z]*\\n?/g, '').replace(/```/g, '').trim();\n  }\n}\n\n// Ensure message isn't too long for WhatsApp (4096 chars max)\nif (responseText.length > 4000) {\n  responseText = responseText.substring(0, 3997) + '...';\n}\n\nreturn [{\n  json: {\n    ...messageData,\n    generatedResponse: responseText,\n    responseLength: responseText.length\n  }\n}];"
+      },
+      "id": "prepare-response",
+      "name": "Prepare Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4640, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://waba.360dialog.io/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"recipient_type\": \"individual\",\n  \"to\": \"{{ $json.from }}\",\n  \"type\": \"text\",\n  \"text\": {\n    \"preview_url\": false,\n    \"body\": {{ JSON.stringify($json.generatedResponse) }}\n  }\n}",
+        "options": {}
+      },
+      "id": "send-whatsapp-reply",
+      "name": "Send WhatsApp Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4860, 500],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "whatsapp-api",
+          "name": "WhatsApp API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "channel": "#leads",
+        "text": "=🏠 *New WhatsApp Lead*\n\n*Name:* {{ $('Calculate Final Score').first().json.qualification.extracted_data?.name?.full || $('Calculate Final Score').first().json.contactName || 'Unknown' }}\n*Phone:* {{ $('Calculate Final Score').first().json.formattedPhone }}\n*Service:* {{ ($('Calculate Final Score').first().json.qualification.extracted_data?.service_type?.primary || 'Not specified').replace(/-/g, ' ') }}\n*Location:* {{ $('Calculate Final Score').first().json.qualification.extracted_data?.location?.postcode_area || $('Calculate Final Score').first().json.qualification.extracted_data?.location?.area_name || 'Not specified' }}\n*Budget:* {{ ($('Calculate Final Score').first().json.qualification.extracted_data?.budget?.band || 'Unknown').replace(/-/g, ' to ').replace('under', 'Under £').replace('over', 'Over £').replace('k', 'k') }}\n*Timeline:* {{ $('Calculate Final Score').first().json.qualification.extracted_data?.timeline?.category || 'Unknown' }}\n*Score:* {{ $('Calculate Final Score').first().json.finalScore }}/100 ({{ $('Calculate Final Score').first().json.finalPriority.toUpperCase() }})\n\n📝 *Message:*\n{{ $('Calculate Final Score').first().json.text.substring(0, 300) }}{{ $('Calculate Final Score').first().json.text.length > 300 ? '...' : '' }}\n\n<https://app.hubspot.com/contacts/{{ $env.HUBSPOT_PORTAL_ID }}/deal/{{ $('Create HubSpot Deal').first().json.id }}|View Deal in HubSpot>",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "notify-slack",
+      "name": "Notify Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [5080, 500],
+      "credentials": {
+        "slackApi": {
+          "id": "slack",
+          "name": "Slack"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-hot",
+              "leftValue": "={{ $json.finalPriority }}",
+              "rightValue": "hot",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-hot-lead",
+      "name": "Is Hot Lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [5300, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/events",
+        "authentication": "oAuth2",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"subject\": \"Site Survey - {{ $('Calculate Final Score').first().json.qualification.extracted_data?.name?.full || $('Calculate Final Score').first().json.contactName }}\",\n  \"body\": {\n    \"contentType\": \"HTML\",\n    \"content\": \"<p><strong>Lead Details:</strong></p><ul><li>Phone: {{ $('Calculate Final Score').first().json.formattedPhone }}</li><li>Service: {{ $('Calculate Final Score').first().json.qualification.extracted_data?.service_type?.primary }}</li><li>Location: {{ $('Calculate Final Score').first().json.qualification.extracted_data?.location?.postcode_area }}</li><li>Score: {{ $('Calculate Final Score').first().json.finalScore }}/100</li></ul><p><strong>Original Message:</strong></p><p>{{ $('Calculate Final Score').first().json.text }}</p>\"\n  },\n  \"start\": {\n    \"dateTime\": \"{{ $now.plus(2, 'days').set({hour: 10, minute: 0, second: 0, millisecond: 0}).toISO() }}\",\n    \"timeZone\": \"Europe/London\"\n  },\n  \"end\": {\n    \"dateTime\": \"{{ $now.plus(2, 'days').set({hour: 10, minute: 30, second: 0, millisecond: 0}).toISO() }}\",\n    \"timeZone\": \"Europe/London\"\n  },\n  \"location\": {\n    \"displayName\": \"{{ $('Calculate Final Score').first().json.qualification.extracted_data?.location?.postcode_full || $('Calculate Final Score').first().json.qualification.extracted_data?.location?.postcode_area || 'TBC' }}\"\n  },\n  \"isReminderOn\": true,\n  \"reminderMinutesBeforeStart\": 60,\n  \"categories\": [\"Hot Lead\", \"Site Survey\"]\n}",
+        "options": {}
+      },
+      "id": "create-calendar-event",
+      "name": "Create Tentative Survey",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [5520, 380],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "microsoft365",
+          "name": "Microsoft 365"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "prompt",
+              "name": "prompt",
+              "type": "string",
+              "value": "={{ $('Read Qualifier Prompt').first().json.data }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "load-qualifier-prompt",
+      "name": "Load Qualifier Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [2880, 500]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "filePath": "/home/node/workflows/agent-1/prompts/lead-qualifier.txt",
+        "options": {}
+      },
+      "id": "read-qualifier-prompt",
+      "name": "Read Qualifier Prompt",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [2880, 340]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "filePath": "/home/node/workflows/agent-1/prompts/whatsapp-responder.txt",
+        "options": {}
+      },
+      "id": "read-responder-prompt",
+      "name": "Read Responder Prompt",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [4200, 340]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "prompt",
+              "name": "prompt",
+              "type": "string",
+              "value": "={{ $('Read Responder Prompt').first().json.data }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "load-responder-prompt",
+      "name": "Load Responder Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [4200, 660]
+    },
+    {
+      "parameters": {},
+      "id": "noop-end",
+      "name": "End",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [5740, 620]
+    },
+    {
+      "parameters": {},
+      "id": "noop-skip",
+      "name": "Skip Processing",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "WhatsApp Webhook": {
+      "main": [
+        [
+          {
+            "node": "Is Verification?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Verification?": {
+      "main": [
+        [
+          {
+            "node": "Respond to Verification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Parse WhatsApp Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse WhatsApp Message": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 200 OK": {
+      "main": [
+        [
+          {
+            "node": "Should Skip?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Skip?": {
+      "main": [
+        [
+          {
+            "node": "Skip Processing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Audio Message?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Audio Message?": {
+      "main": [
+        [
+          {
+            "node": "Download Audio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge Text",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Download Audio": {
+      "main": [
+        [
+          {
+            "node": "Transcribe with Deepgram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe with Deepgram": {
+      "main": [
+        [
+          {
+            "node": "Extract Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Transcript": {
+      "main": [
+        [
+          {
+            "node": "Merge Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Text": {
+      "main": [
+        [
+          {
+            "node": "Check Existing HubSpot Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Existing HubSpot Contact": {
+      "main": [
+        [
+          {
+            "node": "Enrich with HubSpot Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enrich with HubSpot Data": {
+      "main": [
+        [
+          {
+            "node": "Read Qualifier Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Qualifier Prompt": {
+      "main": [
+        [
+          {
+            "node": "Load Qualifier Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Qualifier Prompt": {
+      "main": [
+        [
+          {
+            "node": "Qualify Lead with Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qualify Lead with Claude": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "Calculate Final Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Final Score": {
+      "main": [
+        [
+          {
+            "node": "Create/Update HubSpot Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create/Update HubSpot Contact": {
+      "main": [
+        [
+          {
+            "node": "Create HubSpot Deal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create HubSpot Deal": {
+      "main": [
+        [
+          {
+            "node": "Associate Contact to Deal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Associate Contact to Deal": {
+      "main": [
+        [
+          {
+            "node": "Read Responder Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Responder Prompt": {
+      "main": [
+        [
+          {
+            "node": "Load Responder Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Responder Prompt": {
+      "main": [
+        [
+          {
+            "node": "Generate WhatsApp Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate WhatsApp Response": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Response": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp Reply": {
+      "main": [
+        [
+          {
+            "node": "Notify Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Slack": {
+      "main": [
+        [
+          {
+            "node": "Is Hot Lead?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Hot Lead?": {
+      "main": [
+        [
+          {
+            "node": "Create Tentative Survey",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "End",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Tentative Survey": {
+      "main": [
+        [
+          {
+            "node": "End",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "error-handler"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "agent-1",
+      "id": "agent-1-lead-intake"
+    },
+    {
+      "name": "production",
+      "id": "production"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2024-12-04T10:00:00.000Z",
+  "versionId": "1"
+}

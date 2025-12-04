@@ -1,0 +1,230 @@
+{
+  "templates": {
+    "survey_booking_confirmation": {
+      "name": "survey_booking_confirmation",
+      "language": "en_GB",
+      "category": "UTILITY",
+      "components": [
+        {
+          "type": "HEADER",
+          "format": "TEXT",
+          "text": "Survey Confirmed ✅"
+        },
+        {
+          "type": "BODY",
+          "text": "Hi {{1}},\n\nYour site survey is confirmed for:\n\n📅 {{2}}\n🕐 {{3}}\n📍 {{4}}\n\nRoss from Hampstead Renovations will visit to discuss your {{5}} project. The visit usually takes about 30 minutes.\n\nPlease ensure access to all areas you'd like us to look at.\n\nSee you then!",
+          "example": {
+            "body_text": [
+              ["John", "Monday 15th January", "10:00 AM", "NW3 5TY", "kitchen extension"]
+            ]
+          }
+        },
+        {
+          "type": "FOOTER",
+          "text": "Reply RESCHEDULE if you need to change the time"
+        }
+      ]
+    },
+
+    "survey_reminder_24h": {
+      "name": "survey_reminder_24h",
+      "language": "en_GB",
+      "category": "UTILITY",
+      "components": [
+        {
+          "type": "BODY",
+          "text": "Hi {{1}},\n\nJust a reminder that your site survey is tomorrow:\n\n📅 {{2}} at {{3}}\n\nRoss will be there to discuss your project. If anything has changed, just reply to this message.\n\nSee you tomorrow!",
+          "example": {
+            "body_text": [
+              ["John", "Tuesday 16th January", "10:00 AM"]
+            ]
+          }
+        }
+      ]
+    },
+
+    "quote_sent": {
+      "name": "quote_sent",
+      "language": "en_GB",
+      "category": "UTILITY",
+      "components": [
+        {
+          "type": "HEADER",
+          "format": "DOCUMENT"
+        },
+        {
+          "type": "BODY",
+          "text": "Hi {{1}},\n\nThanks for having us over to discuss your {{2}} project.\n\nI've attached our detailed quotation ({{3}}) for your review. The quote is valid for 30 days.\n\nPlease don't hesitate to call or message if you have any questions - I'm happy to walk through everything.\n\nRoss\nHampstead Renovations",
+          "example": {
+            "body_text": [
+              ["John", "kitchen extension", "£87,500"]
+            ]
+          }
+        },
+        {
+          "type": "BUTTONS",
+          "buttons": [
+            {
+              "type": "QUICK_REPLY",
+              "text": "I have questions"
+            },
+            {
+              "type": "QUICK_REPLY",
+              "text": "Ready to proceed"
+            }
+          ]
+        }
+      ]
+    },
+
+    "follow_up_post_quote": {
+      "name": "follow_up_post_quote",
+      "language": "en_GB",
+      "category": "MARKETING",
+      "components": [
+        {
+          "type": "BODY",
+          "text": "Hi {{1}},\n\nI wanted to follow up on the quote we sent for your {{2}} project.\n\nHave you had a chance to review it? Happy to answer any questions or discuss any adjustments.\n\nNo pressure at all - just want to make sure you have everything you need to make your decision.\n\nRoss",
+          "example": {
+            "body_text": [
+              ["John", "loft conversion"]
+            ]
+          }
+        }
+      ]
+    },
+
+    "project_start_confirmation": {
+      "name": "project_start_confirmation",
+      "language": "en_GB",
+      "category": "UTILITY",
+      "components": [
+        {
+          "type": "HEADER",
+          "format": "TEXT",
+          "text": "Project Confirmed 🏗️"
+        },
+        {
+          "type": "BODY",
+          "text": "Hi {{1}},\n\nGreat news - everything is confirmed for your {{2}} project!\n\n📅 Start date: {{3}}\n👷 Project manager: {{4}}\n📞 Site contact: {{5}}\n\nWe'll be in touch the week before to confirm access arrangements.\n\nExcited to get started!\n\nRoss & the team",
+          "example": {
+            "body_text": [
+              ["John", "kitchen extension", "Monday 1st March", "Dave", "07700 900123"]
+            ]
+          }
+        }
+      ]
+    },
+
+    "initial_response": {
+      "name": "initial_response",
+      "language": "en_GB",
+      "category": "MARKETING",
+      "components": [
+        {
+          "type": "BODY",
+          "text": "Hi {{1}},\n\nThanks for getting in touch about your {{2}} project.\n\n{{3}}\n\nWould you be free for a quick site visit this week? We could look at what's possible and give you an idea of costs.\n\nRoss\nHampstead Renovations",
+          "example": {
+            "body_text": [
+              ["John", "kitchen extension", "A rear extension is a great way to open up the living space."]
+            ]
+          }
+        }
+      ]
+    },
+
+    "out_of_area": {
+      "name": "out_of_area",
+      "language": "en_GB",
+      "category": "UTILITY",
+      "components": [
+        {
+          "type": "BODY",
+          "text": "Hi {{1}},\n\nThanks so much for considering us for your project.\n\nUnfortunately, we specialise in North West London (NW1-11, N2, N6, N10) and {{2}} is a bit outside our usual area.\n\nI'd recommend checking the Federation of Master Builders website (fmb.org.uk) to find trusted local builders in your area.\n\nBest of luck with your project!\n\nHampstead Renovations",
+          "example": {
+            "body_text": [
+              ["John", "SE15"]
+            ]
+          }
+        }
+      ]
+    },
+
+    "request_more_info": {
+      "name": "request_more_info",
+      "language": "en_GB",
+      "category": "UTILITY",
+      "components": [
+        {
+          "type": "BODY",
+          "text": "Hi {{1}},\n\nThanks for reaching out! Your project sounds interesting.\n\nTo give you the best guidance, could you let me know:\n\n{{2}}\n\nOnce I have those details, I can give you a much better idea of what's involved.\n\nRoss\nHampstead Renovations",
+          "example": {
+            "body_text": [
+              ["John", "• What's the postcode of the property?\n• Roughly when are you looking to start?"]
+            ]
+          }
+        }
+      ]
+    },
+
+    "weekend_auto_reply": {
+      "name": "weekend_auto_reply",
+      "language": "en_GB",
+      "category": "UTILITY",
+      "components": [
+        {
+          "type": "BODY",
+          "text": "Hi {{1}},\n\nThanks for your message! Our office is closed over the weekend, but I've noted your enquiry and will get back to you first thing Monday morning.\n\nFor anything urgent, please call 020 7946 0958 and leave a voicemail.\n\nHave a great weekend!\n\nHampstead Renovations",
+          "example": {
+            "body_text": [
+              ["there"]
+            ]
+          }
+        }
+      ]
+    }
+  },
+
+  "quick_replies": {
+    "survey_times": [
+      "Monday morning",
+      "Tuesday afternoon", 
+      "Wednesday morning",
+      "Another time"
+    ],
+    "quote_response": [
+      "I have questions",
+      "Ready to proceed",
+      "Need more time"
+    ],
+    "general": [
+      "Call me",
+      "More info please",
+      "Not interested"
+    ]
+  },
+
+  "interactive_lists": {
+    "services": {
+      "title": "What can we help with?",
+      "sections": [
+        {
+          "title": "Extensions",
+          "rows": [
+            {"id": "kitchen-extension", "title": "Kitchen Extension", "description": "Rear, side return or wraparound"},
+            {"id": "loft-conversion", "title": "Loft Conversion", "description": "Dormer, mansard or velux"},
+            {"id": "basement", "title": "Basement Conversion", "description": "Full dig or lightwell"}
+          ]
+        },
+        {
+          "title": "Renovations",
+          "rows": [
+            {"id": "full-renovation", "title": "Full House Renovation", "description": "Complete refurbishment"},
+            {"id": "bathroom", "title": "Bathroom Refurbishment", "description": "High-end bathroom works"},
+            {"id": "other", "title": "Something Else", "description": "Tell us about your project"}
+          ]
+        }
+      ]
+    }
+  }
+}
