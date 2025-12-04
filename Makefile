@@ -36,10 +36,11 @@ dev: ## Start development environment with hot reload
 	@echo "$(GREEN)Starting development environment...$(RESET)"
 	docker-compose --profile development up -d
 	@echo "$(GREEN)Development environment started!$(RESET)"
-	@echo "  n8n:          http://localhost:5678"
-	@echo "  Quote Builder: http://localhost:8000"
-	@echo "  Web Form:      http://localhost:3000"
-	@echo "  Traefik:       http://localhost:8080"
+	@echo "  n8n:               http://localhost:5678"
+	@echo "  Quote Builder:     http://localhost:8001"
+	@echo "  Contract Generator: http://localhost:8002"
+	@echo "  Invoice Generator: http://localhost:8003"
+	@echo "  Web Form:          http://localhost:3000"
 
 dev-logs: ## Follow development logs
 	docker-compose --profile development logs -f
@@ -94,9 +95,21 @@ build-quote: ## Build quote builder image
 	@echo "$(GREEN)Building quote builder...$(RESET)"
 	docker-compose build quote-builder
 
+build-contract: ## Build contract generator image
+	@echo "$(GREEN)Building contract generator...$(RESET)"
+	docker-compose build contract-generator
+
+build-invoice: ## Build invoice generator image
+	@echo "$(GREEN)Building invoice generator...$(RESET)"
+	docker-compose build invoice-generator
+
 build-web: ## Build web form image
 	@echo "$(GREEN)Building web form...$(RESET)"
 	docker-compose build web-form
+
+build-services: ## Build all Python microservices
+	@echo "$(GREEN)Building all microservices...$(RESET)"
+	docker-compose build quote-builder contract-generator invoice-generator
 
 # ─────────────────────────────────────────────────────────────────────────────────
 # TESTING
@@ -247,10 +260,12 @@ security-scan-docker: ## Scan Docker images for vulnerabilities
 health: ## Check health of all services
 	@echo "$(CYAN)Checking service health...$(RESET)"
 	@echo ""
-	@echo "n8n:            $$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5678/healthz || echo 'DOWN')"
-	@echo "Quote Builder:  $$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/health || echo 'DOWN')"
-	@echo "PostgreSQL:     $$(docker-compose exec -T postgres pg_isready -U hampstead > /dev/null 2>&1 && echo 'UP' || echo 'DOWN')"
-	@echo "Redis:          $$(docker-compose exec -T redis redis-cli ping 2>/dev/null || echo 'DOWN')"
+	@echo "n8n:               $$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5678/healthz || echo 'DOWN')"
+	@echo "Quote Builder:     $$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8001/health || echo 'DOWN')"
+	@echo "Contract Gen:      $$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8002/health || echo 'DOWN')"
+	@echo "Invoice Gen:       $$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8003/health || echo 'DOWN')"
+	@echo "PostgreSQL:        $$(docker-compose exec -T postgres pg_isready -U hampstead > /dev/null 2>&1 && echo 'UP' || echo 'DOWN')"
+	@echo "Redis:             $$(docker-compose exec -T redis redis-cli ping 2>/dev/null || echo 'DOWN')"
 	@echo ""
 
 # ─────────────────────────────────────────────────────────────────────────────────

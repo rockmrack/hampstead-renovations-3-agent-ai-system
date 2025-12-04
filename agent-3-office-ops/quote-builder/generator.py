@@ -28,6 +28,9 @@ from typing import Any, Optional
 import boto3
 import httpx
 import structlog
+import uvicorn
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from jinja2 import Environment, FileSystemLoader
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from pydantic_settings import BaseSettings
@@ -1154,40 +1157,137 @@ class QuoteService:
 
 
 # =============================================================================
-# MAIN ENTRYPOINT (for testing)
+# FASTAPI APPLICATION
 # =============================================================================
 
+# Initialize service
+quote_service = QuoteService()
 
-async def main():
-    """Test quote generation."""
-    service = QuoteService()
+# Create FastAPI app
+app = FastAPI(
+    title="Hampstead Renovations Quote Builder",
+    description="Professional quote generation service for renovation projects",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
 
-    # Sample quote request
-    request = QuoteRequest(
-        customer=CustomerDetails(
-            name="John Smith",
-            email="john.smith@example.com",
-            phone="+44 7700 900123",
-            address_line1="42 Hampstead High Street",
-            city="London",
-            postcode="NW3 1QE",
-        ),
-        project=ProjectDetails(
-            project_type="kitchen",
-            tier="premium",
-            estimated_sqm=Decimal("25"),
-            requirements=["Modern handleless design", "Quartz worktops", "Integrated appliances"],
-            special_requests="Would like underfloor heating if possible",
-        ),
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+class QuoteResponse(BaseModel):
+    """API response model for quote generation."""
+    quote_number: str
+    total: float
+    subtotal: float
+    vat: float
+    discount: float
+    pdf_url: Optional[str] = None
+    pdf_path: Optional[str] = None
+    valid_until: str
+    generated_at: str
+    message: str
+
+
+class HealthResponse(BaseModel):
+    """Health check response."""
+    status: str
+    service: str
+    version: str
+    timestamp: str
+
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Health check endpoint."""
+    return HealthResponse(
+        status="healthy",
+        service="quote-builder",
+        version="1.0.0",
+        timestamp=datetime.now().isoformat(),
     )
 
-    result = await service.generate(request)
-    print(f"Quote generated: {result.quote_number}")
-    print(f"Total: £{result.total:,.2f}")
-    print(f"PDF saved to: {result.pdf_path}")
+
+@app.post("/generate", response_model=QuoteResponse)
+async def generate_quote(request: QuoteRequest, background_tasks: BackgroundTasks):
+    """
+    Generate a professional PDF quote.
+    
+    This endpoint creates a detailed quote based on customer and project details,
+    generates a PDF, and optionally uploads to S3.
+    """
+    try:
+        logger.info(
+            "quote_generation_requested",
+            customer_name=request.customer.name,
+            project_type=request.project.project_type,
+            tier=request.project.tier,
+        )
+        
+        result = await quote_service.generate(request)
+        
+        # Calculate valid until date
+        valid_until = datetime.now() + timedelta(days=30)
+        
+        return QuoteResponse(
+            quote_number=result.quote_number,
+            total=float(result.total),
+            subtotal=float(result.subtotal),
+            vat=float(result.vat),
+            discount=float(result.discount),
+            pdf_url=result.s3_url,
+            pdf_path=result.pdf_path,
+            valid_until=valid_until.strftime("%Y-%m-%d"),
+            generated_at=datetime.now().isoformat(),
+            message="Quote generated successfully",
+        )
+        
+    except ValueError as e:
+        logger.error("quote_validation_error", error=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("quote_generation_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Quote generation failed: {str(e)}")
+
+
+@app.get("/pricing-matrix")
+async def get_pricing_matrix():
+    """Get the current pricing matrix."""
+    try:
+        pricing_engine = PricingEngine()
+        return {
+            "status": "success",
+            "pricing_matrix": pricing_engine.pricing_matrix,
+            "location_multipliers": pricing_engine.location_multipliers,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/project-types")
+async def get_project_types():
+    """Get available project types and tiers."""
+    return {
+        "project_types": [
+            "kitchen", "bathroom", "extension", "loft_conversion",
+            "full_renovation", "flooring", "electrical", "plumbing",
+            "painting", "landscaping",
+        ],
+        "tiers": ["essential", "premium", "luxury"],
+        "description": {
+            "essential": "Quality materials and workmanship at competitive prices",
+            "premium": "Enhanced finishes with premium materials and extended warranties",
+            "luxury": "Bespoke solutions with the finest materials and white-glove service",
+        },
+    }
 
 
 if __name__ == "__main__":
-    import asyncio
-
-    asyncio.run(main())
+    uvicorn.run(app, host="0.0.0.0", port=8001)
