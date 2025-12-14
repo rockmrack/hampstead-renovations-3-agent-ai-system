@@ -10,6 +10,7 @@ import { ContactStep } from './steps/ContactStep'
 import { PropertyStep } from './steps/PropertyStep'
 import { ProjectStep } from './steps/ProjectStep'
 import { DetailsStep } from './steps/DetailsStep'
+import { submitLead, formatApiError } from '../services/api'
 
 // UK phone regex - allows various formats
 const ukPhoneRegex = /^(?:(?:\+44)|(?:0))(?:\s?\d){9,10}$/
@@ -134,30 +135,16 @@ export function LeadForm({ onSuccess }: LeadFormProps) {
     setSubmitError(null)
 
     try {
-      const webhookUrl = import.meta.env.VITE_WEBHOOK_URL || '/api/webhook/web-lead'
+      // Use the new API service with retry logic
+      const result = await submitLead(data)
       
-      const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ...data,
-          source: 'web-form',
-          submittedAt: new Date().toISOString(),
-          userAgent: navigator.userAgent,
-          referrer: document.referrer,
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to submit form. Please try again.')
+      if (result.success) {
+        onSuccess(data.firstName, result.leadId)
+      } else {
+        throw new Error(result.message || 'Submission failed')
       }
-
-      const result = await response.json()
-      onSuccess(data.firstName, result.leadId)
-    } catch {
-      setSubmitError('Something went wrong. Please try again or contact us directly.')
+    } catch (error) {
+      setSubmitError(formatApiError(error))
     } finally {
       setIsSubmitting(false)
     }

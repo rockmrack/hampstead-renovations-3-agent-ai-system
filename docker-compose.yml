@@ -263,6 +263,78 @@ services:
       retries: 3
 
   # ─────────────────────────────────────────────────────────────────────────────
+  # LEAD INTAKE API - FASTAPI MICROSERVICE
+  # ─────────────────────────────────────────────────────────────────────────────
+  lead-intake:
+    build:
+      context: ./agent-1-lead-intake/api
+      dockerfile: Dockerfile
+    container_name: hampstead-lead-intake
+    restart: unless-stopped
+    ports:
+      - "8004:8004"
+    environment:
+      - HUBSPOT_API_KEY=${HUBSPOT_API_KEY}
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://n8n:5678/webhook/lead-intake}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - REDIS_URL=redis://redis:6379
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,https://form.hampsteadrenovations.co.uk}
+    networks:
+      - hampstead-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.lead-intake.rule=Host(`api.${N8N_HOST}`) && PathPrefix(`/leads`)"
+      - "traefik.http.services.lead-intake.loadbalancer.server.port=8004"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # ADMIN DASHBOARD API - FASTAPI MICROSERVICE
+  # ─────────────────────────────────────────────────────────────────────────────
+  dashboard-api:
+    build:
+      context: ./shared/dashboard-api
+      dockerfile: Dockerfile
+    container_name: hampstead-dashboard-api
+    restart: unless-stopped
+    ports:
+      - "8005:8005"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - REDIS_URL=redis://redis:6379
+      - HUBSPOT_API_KEY=${HUBSPOT_API_KEY}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    networks:
+      - hampstead-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard-api.rule=Host(`api.${N8N_HOST}`) && PathPrefix(`/dashboard`)"
+      - "traefik.http.services.dashboard-api.loadbalancer.server.port=8005"
+
+  # ─────────────────────────────────────────────────────────────────────────────
   # WEB FORM - REACT FRONTEND
   # ─────────────────────────────────────────────────────────────────────────────
   web-form:

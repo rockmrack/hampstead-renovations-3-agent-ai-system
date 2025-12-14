@@ -1,0 +1,3 @@
+# Shared Authentication Module Dependencies
+pyjwt>=2.8.0
+structlog>=24.1.0

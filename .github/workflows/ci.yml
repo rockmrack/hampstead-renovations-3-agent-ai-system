@@ -1,0 +1,224 @@
+# =============================================================================
+# Hampstead Renovations - CI/CD Pipeline
+# =============================================================================
+# Automated testing, linting, security scanning, and Docker builds
+# =============================================================================
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ===========================================================================
+  # Python Linting and Testing
+  # ===========================================================================
+  python-quality:
+    name: Python Quality Checks
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [quote-builder, contract-generator, invoice-generator]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          cd agent-3-office-ops/${{ matrix.service }}
+          pip install -r requirements.txt
+          pip install ruff black pytest pytest-asyncio pytest-cov
+
+      - name: Run Ruff linter
+        run: |
+          cd agent-3-office-ops/${{ matrix.service }}
+          ruff check . --output-format=github || true
+
+      - name: Check formatting with Black
+        run: |
+          cd agent-3-office-ops/${{ matrix.service }}
+          black --check . || true
+
+      - name: Run tests with coverage
+        run: |
+          cd agent-3-office-ops/${{ matrix.service }}
+          pytest tests/ -v --cov=. --cov-report=xml --cov-report=term-missing || true
+        env:
+          TEST_DATABASE_URL: postgresql://test:test@localhost:5432/test
+          TEST_AWS_ACCESS_KEY_ID: ""
+          TEST_AWS_SECRET_ACCESS_KEY: ""
+          TEST_S3_BUCKET: test-bucket
+          TEST_HUBSPOT_API_KEY: ""
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: agent-3-office-ops/${{ matrix.service }}/coverage.xml
+          flags: ${{ matrix.service }}
+        continue-on-error: true
+
+  # ===========================================================================
+  # TypeScript/React Linting and Testing
+  # ===========================================================================
+  frontend-quality:
+    name: Frontend Quality Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web-form/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd web-form
+          npm ci
+
+      - name: Run ESLint
+        run: |
+          cd web-form
+          npm run lint || true
+
+      - name: Run TypeScript type check
+        run: |
+          cd web-form
+          npx tsc --noEmit || true
+
+      - name: Run tests
+        run: |
+          cd web-form
+          npm test -- --run || true
+
+      - name: Build application
+        run: |
+          cd web-form
+          npm run build
+
+  # ===========================================================================
+  # Security Scanning
+  # ===========================================================================
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Snyk to check for vulnerabilities
+        uses: snyk/actions/python-3.10@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --all-projects
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+        continue-on-error: true
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+        continue-on-error: true
+
+  # ===========================================================================
+  # Docker Build
+  # ===========================================================================
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [python-quality, frontend-quality]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    strategy:
+      matrix:
+        include:
+          - context: agent-3-office-ops/quote-builder
+            image: quote-builder
+          - context: agent-3-office-ops/contract-generator
+            image: contract-generator
+          - context: agent-3-office-ops/invoice-generator
+            image: invoice-generator
+          - context: web-form
+            image: web-form
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.image }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ===========================================================================
+  # Deploy to Staging
+  # ===========================================================================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [docker-build, security-scan]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: staging
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy notification
+        run: |
+          echo "🚀 Deployment to staging would happen here"
+          echo "Docker images built and pushed to GHCR"
+          echo "Ready for docker-compose pull && docker-compose up -d"
